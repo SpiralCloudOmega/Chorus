@@ -302,8 +302,6 @@ The table below shows default tool availability for each preset (no custom permi
 | `chorus_admin_delete_idea` | `idea:admin` | No | No | Yes |
 | `chorus_admin_delete_document` | `document:admin` | No | No | Yes |
 
-> Changes in 0.7.0: the `pm_agent` preset now also carries `task:write` (for `claim/release/submit/report`) and `project:write` (for project and group management). This widens PM's MCP tool surface by 10 tools vs 0.6.x — handler-level assignee / authorship guards still prevent misuse. See `docs/MCP_TOOLS.md` for the complete tool → permission map.
-
 ### 5. Review Agent Configuration
 
 The plugin includes two independent review agents. After proposal submission or task verification, a PostToolUse hook injects context instructing the main agent to spawn the reviewer. The main agent must spawn it manually — it is NOT auto-launched. Both are **enabled by default**.
@@ -394,7 +392,7 @@ This is the core overview skill. For stage-specific workflows, use:
 
 1. Call `chorus_checkin()` to learn your role and assignments
 2. Based on your role, use the appropriate skill:
-   - **Full Auto** → `/yolo` — give a prompt, agent handles everything (requires all 3 roles: admin + pm + developer)
+   - **Full Auto** → `/yolo` — give a prompt, agent handles everything (requires Admin-preset permissions: write on every resource + approve/verify admin bits)
    - PM Agent → `/idea` then `/proposal`
    - Developer Agent → `/develop`
    - Admin Agent → `/review` (also has access to all PM and Developer tools)
