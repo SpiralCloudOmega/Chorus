@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.7.0] - 2026-05-02
+
+### Added
+- **Fine-grained agent permissions**: Replaces the 3-role agent model (admin/pm/developer) with a permission matrix of 5 resources × 3 actions = 15 bits, exposed in the UI as role presets plus a Custom option that freely combines bits. Introduces authz types/presets/permissions library with effective-set computation, wires REST + MCP servers to gate on `Permission[]`, and migrates the Agent/ApiKey schema with a new `permissions` column. Settings create/edit and onboarding share an `AgentPermissionPicker` grid. (#232)
+
+### Changed
+- **Checkin response shape**: Returns a resource-aggregated permission object for token-efficient consumption by skills and plugin hooks. (#232)
+- **Legacy role aliases rejected at API boundary**: `POST /api/agents` no longer accepts the legacy `pm`/`developer`/`admin` role strings; they now return 422. (#232)
+- **Proposal reject/revoke authorization**: `pm_reject_proposal` / `pm_revoke_proposal` gate on `hasPermission(..., "proposal:admin")` instead of ad-hoc role-string checks. Authors can always act on their own proposals. (#232)
+
+### Fixed
+- **Settings edit preset derivation**: An agent with `roles=[pm_agent]` plus extra `task:admin` was previously read as preset mode and silently zeroed on save. Now correctly accounts for custom permissions layered on top of a preset. (#232)
+- **Claim routes gated on the wrong identity**: `/api/ideas|tasks/[uuid]/claim` now look up the selected agent by UUID and gate on `idea:write` / `task:write`, instead of the legacy pm/developer role strings (which matched zero 0.7.0 agents). (#232)
+
+### Plugin
+- **Claude Code plugin → 0.8.0**: Prereq checks switched to permission-based gating. `chorus/SKILL.md` adds a Permissions section and Tool-Access-by-Preset table; `proposal`, `quick-dev`, `yolo`, and `develop` skills updated to reference resource permissions instead of role labels. (#232)
+- **Codex plugin → 0.8.0**: Ported all 0.7.0 permission-model updates to `plugins/chorus/` — bumped plugin + every skill (including the two reviewer skills) + the hardcoded `clientInfo` version in `chorus-mcp-call.sh`. Cleaned up stale role-label language in `yolo`/`develop`. Fixed `chorus_create_session` being called with a non-existent `roles` arg. (#233)
+- **plugin-maintenance skill → 0.2.0**: Future plugin changes must bump both packages + the `clientInfo` string, and preserve intentional differences (stateless hooks, `$`-prefixed skills, TOML config) when porting content between the two plugins. (#233)
+
+---
+
 ## [0.6.7] - 2026-04-28
 
 ### Added
