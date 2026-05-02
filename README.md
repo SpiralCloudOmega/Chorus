@@ -35,6 +35,8 @@ creates   analyzes       drafts PRD            codes &      reviews   closes
 
 ## What's New
 
+**[v0.7.0](https://chorus-ai.dev/blog/chorus-v0.7.0-release/)** — Fine-grained agent permissions: 5 resources × 3 actions grid replaces the PM/Developer/Admin three-way choice, with presets + a Custom option for free combination.
+
 **[v0.6.7](https://chorus-ai.dev/blog/chorus-v0.6.7-release/)** — Chorus plugin for Codex CLI (one-command installer), workspace picker when one email belongs to multiple Companies, per-client connect guides.
 
 **[v0.6.6](https://chorus-ai.dev/blog/chorus-v0.6.6-release/)** — npm one-click install (`npx @chorus-aidlc/chorus`), document export (MD/PDF/Word), proposal revoke, faster agent checkin with work status at a glance.
