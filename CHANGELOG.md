@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.8.0] - 2026-05-17
+
+### Added
+- **OpenSpec-aware mode (Claude Code only for now)**: Auto-activates when both an `openspec/` directory and the `openspec` CLI are present. Adds a dedicated `openspec-aware` skill in the Claude Code plugin, `/opsx/{explore,propose,apply,archive}` slash commands, four `openspec-*` skills under `.claude/skills/`, an `archive-trigger` spec, and `docs/OPENSPEC_MODE.md`. Includes a `PostToolUse` archive-trigger hook (`on-post-verify-task.sh`) that fires after task verification. (#245)
+
+### Changed
+- **`my_assignments` aligned with checkin.ideaTracker**: Extracted a shared `idea-tracker.service.ts` so `chorus_get_my_assignments` and `chorus_checkin` return the same project-grouped idea-tracker shape (derived status + proposal/task counts), replacing the divergent legacy assignments aggregation. (#244)
+- **Docs sweep**: Aligned README, ARCHITECTURE, MCP_TOOLS, and PRD with the 0.7.0 permission model and the stateless MCP endpoint. (#254)
+
+### Fixed
+- **PGlite cross-handler race**: Pin pg.Pool to `max=1` in PGlite mode so concurrent Next.js route handlers can't race the same connection through PGlite's single-writer engine. (#252)
+- **Windows tarball runnable**: Reworked `chorus.mjs` and added `scripts/prepack-pglite.mjs` so the published npm tarball runs cleanly on Windows. (#251)
+
+### Plugin
+- **Claude Code plugin → 0.8.3**: OpenSpec-aware mode and reviewer `maxTurns` doubled. (#245, #249)
+- **Codex plugin → 0.8.3**: Cross-port maintenance only (no OpenSpec mode yet).
+
+---
+
 ## [0.7.1] - 2026-05-04
 
 ### Added

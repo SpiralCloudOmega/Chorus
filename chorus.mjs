@@ -12,7 +12,7 @@ import {
 import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -71,11 +71,13 @@ OPTIONS
   -d, --data-dir <path>    Data directory for PGlite    (default: ~/.chorus-data, env: CHORUS_DATA_DIR)
       --hostname <host>    Bind address                 (default: 0.0.0.0)
       --pglite-port <port> Embedded PGlite port         (default: 5433, env: CHORUS_PGLITE_PORT)
+      --use-pglite[=BOOL]  Use embedded PGlite           (default: true; pass =false for external Postgres)
   -h, --help               Show this help message
   -v, --version            Show version number
 
 ENVIRONMENT VARIABLES
-  DATABASE_URL             External PostgreSQL URL (skips embedded PGlite)
+  CHORUS_USE_PGLITE        Set to "0" to disable embedded PGlite (default: enabled)
+  DATABASE_URL             External PostgreSQL URL (required when --use-pglite=false)
   REDIS_URL                Redis URL for multi-instance pub/sub
   DEFAULT_USER             Auto-create login user email
   DEFAULT_PASSWORD         Auto-create login user password
@@ -83,10 +85,10 @@ ENVIRONMENT VARIABLES
   COOKIE_SECURE            Set to "true" for HTTPS deployments
 
 EXAMPLES
-  chorus                                     # Start with defaults
+  chorus                                     # Embedded PGlite (default)
   chorus --port 3000                         # Custom port
   chorus --data-dir /var/lib/chorus          # Custom data directory
-  DATABASE_URL=postgres://... chorus         # Use external PostgreSQL
+  DATABASE_URL=postgres://... chorus --use-pglite=false   # External PostgreSQL
 `);
   process.exit(0);
 }
@@ -158,14 +160,40 @@ function ensureSecret() {
 let pgliteProcess = null;
 
 async function main() {
-  // 1. Ensure data directory
-  mkdirSync(join(dataDir, "pglite"), { recursive: true });
+  // 1. Determine database mode
+  // --use-pglite means "the database is PGlite-backed" (local or remote).
+  // It controls pg.Pool sizing (max=1 to avoid the @electric-sql/pglite-socket
+  // cross-handler race), independently of whether the PGlite process is
+  // local or remote.
+  //
+  // Whether to start a local embedded PGlite is decided by DATABASE_URL:
+  //   - If DATABASE_URL is set, treat it as a pre-existing DB (PGlite or
+  //     real Postgres) and connect to it.
+  //   - Otherwise, --use-pglite=true (default) starts an embedded PGlite.
+  const usePgliteFlag = getArg("--use-pglite");
+  const envFlag = process.env.CHORUS_USE_PGLITE;
+  const usePglite =
+    usePgliteFlag === "false" || envFlag === "0" || envFlag === "false"
+      ? false
+      : true;
+  const startEmbeddedPglite = usePglite && !process.env.DATABASE_URL;
 
-  // 2. Determine database mode
-  const useExternalDb = !!process.env.DATABASE_URL;
+  if (!usePglite && !process.env.DATABASE_URL) {
+    console.error(
+      "ERROR: --use-pglite=false requires DATABASE_URL to be set."
+    );
+    process.exit(1);
+  }
 
-  if (!useExternalDb) {
-    // Start embedded PGlite
+  // 2. Signal child processes to pin pg.Pool max=1 when using any PGlite backend.
+  if (usePglite) {
+    process.env.CHORUS_USE_PGLITE = "1";
+  }
+
+  // 3. Start embedded PGlite if requested (no DATABASE_URL pointing at an
+  //    external instance).
+  if (startEmbeddedPglite) {
+    mkdirSync(join(dataDir, "pglite"), { recursive: true });
     console.log(`Starting embedded PostgreSQL (PGlite) on port ${PGLITE_PORT}...`);
 
     // @electric-sql/pglite-socket does not expose `./dist/scripts/server.js`
@@ -253,13 +281,26 @@ async function main() {
   console.log("");
   console.log(`  URL:       http://${hostname === "0.0.0.0" ? "localhost" : hostname}:${port}`);
   console.log(`  Data:      ${dataDir}`);
-  console.log(`  Database:  ${useExternalDb ? "external PostgreSQL" : "PGlite (embedded)"}`);
+  const dbLabel = usePglite
+    ? (startEmbeddedPglite
+        ? "PGlite (embedded, pg.Pool max=1)"
+        : "PGlite (external, pg.Pool max=1)")
+    : "external PostgreSQL";
+  console.log(`  Database:  ${dbLabel}`);
   console.log(`  Redis:     ${process.env.REDIS_URL ? "connected" : "disabled (in-memory EventBus)"}`);
   const maskedPassword = process.env.DEFAULT_PASSWORD === "chorus"
     ? "chorus"
     : "****";
   console.log(`  Login:     ${process.env.DEFAULT_USER} / ${maskedPassword}`);
   console.log("");
+  if (usePglite) {
+    console.log("  ⚠ PGlite mode pins pg.Pool to max=1 to avoid a cross-handler");
+    console.log("    race in @electric-sql/pglite-socket. Concurrent DB traffic is");
+    console.log("    serialized — fine for local single-user use, but for multi-user");
+    console.log("    or production deployments use a real PostgreSQL: pass");
+    console.log("    --use-pglite=false and set DATABASE_URL.");
+    console.log("");
+  }
 
   // 7. Ensure static assets are accessible inside standalone directory
   // next build puts .next/static/ and public/ at the project root, but
@@ -279,8 +320,11 @@ async function main() {
   }
 
   // 8. Start Next.js standalone server
+  // Use pathToFileURL — on Windows, dynamic import() rejects bare drive paths
+  // like "C:\…\server.js" with ERR_UNSUPPORTED_ESM_URL_SCHEME. file:// URLs
+  // work on every platform.
   process.chdir(standaloneDir);
-  await import(join(standaloneDir, "server.js"));
+  await import(pathToFileURL(join(standaloneDir, "server.js")).href);
 }
 
 // ---------------------------------------------------------------------------
