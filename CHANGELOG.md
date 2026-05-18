@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1] - 2026-05-18
+
+### Fixed
+- **Agent picker dropped non-developer agents**: Task/Idea assign modals filtered agents by the legacy `roles[]` array, so admin-preset and custom-permission agents disappeared from the picker. Replaced with an effective-permission lookup — `getAssignableAgents` now filters by `task:write` / `idea:write` computed from preset + custom bits, and `chorus_pm_assign_task` gates the assignee on the same effective permission. (#259)
+
+---
+
 ## [0.8.0] - 2026-05-17
 
 ### Added
