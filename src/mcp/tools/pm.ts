@@ -18,6 +18,7 @@ import { AlreadyClaimedError, NotClaimedError } from "@/lib/errors";
 import { zArray } from "./schema-utils";
 import { registerPermissionedTool } from "./register-helpers";
 import { hasPermission } from "@/lib/auth";
+import { computeEffectivePermissions } from "@/lib/authz/permissions";
 
 export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
   // chorus_claim_idea - Claim an Idea
@@ -749,10 +750,10 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     "proposal:write",
     "chorus_pm_assign_task",
     {
-      description: "Assign a task to a specified Developer Agent (task must be in open or assigned status)",
+      description: "Assign a task to an agent that has task:write permission (task must be in open or assigned status)",
       inputSchema: z.object({
         taskUuid: z.string().describe("Task UUID"),
-        agentUuid: z.string().describe("Target Developer Agent UUID"),
+        agentUuid: z.string().describe("Target Agent UUID (must have task:write permission)"),
       }),
     },
     async ({ taskUuid, agentUuid }) => {
@@ -770,19 +771,21 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         };
       }
 
-      // Validate target agent exists and belongs to the same company
+      // Validate target agent exists and belongs to the same company.
       const targetAgent = await getAgentByUuid(auth.companyUuid, agentUuid);
       if (!targetAgent) {
         return { content: [{ type: "text", text: "Target Agent not found" }], isError: true };
       }
 
-      // Validate target agent has the developer role
-      const hasDeveloperRole = targetAgent.roles.some(
-        (r: string) => r === "developer" || r === "developer_agent"
+      // Gate by permission, not by legacy role preset name — custom-
+      // configured agents that hold task:write are eligible too.
+      const targetPerms = computeEffectivePermissions(
+        targetAgent.roles,
+        targetAgent.permissions,
       );
-      if (!hasDeveloperRole) {
+      if (!targetPerms.has("task:write")) {
         return {
-          content: [{ type: "text", text: `Agent "${targetAgent.name}" does not have the developer role` }],
+          content: [{ type: "text", text: `Agent "${targetAgent.name}" does not have task:write permission` }],
           isError: true,
         };
       }
