@@ -384,14 +384,28 @@
     "deleteIdea": "Delete Idea",
     "deleteIdeaConfirm": "Are you sure you want to delete \"{title}\"? This action cannot be undone.",
     "createFailed": "Failed to create idea",
-    "moveToProject": "Move to Project",
-    "moveIdeaTitle": "Move Idea to Another Project",
-    "moveIdeaDescription": "Select a project to move this idea to. Linked draft or pending proposals will also be moved.",
-    "searchProjects": "Search projects...",
     "noProjectsFound": "No projects found",
     "moveFailed": "Failed to move idea",
     "moving": "Moving...",
-    "ungrouped": "Ungrouped"
+    "ungrouped": "Ungrouped",
+    "actions": {
+      "move": "Move to project..."
+    },
+    "moveDialog": {
+      "title": "Move idea to a different project",
+      "description": "Pick a target project. Linked proposals, documents, tasks, and activity history will be moved with this idea.",
+      "targetProjectLabel": "Target project",
+      "targetProjectPlaceholder": "Select a project...",
+      "searchProjects": "Search projects...",
+      "previewLoading": "Calculating impact...",
+      "previewSummary": "Will also move: {proposals} proposals, {documents} documents, {tasks} tasks, {activities} activities.",
+      "previewWarning": "This action cannot be undone.",
+      "confirm": "Confirm move",
+      "cancel": "Cancel",
+      "error": "Move failed: {message}",
+      "successToast": "Moved idea — {proposals} proposals, {documents} documents, {tasks} tasks, {activities} activities updated.",
+      "viewMovedIdea": "View"
+    }
   },
   "tasks": {
     "title": "Tasks",
@@ -637,7 +651,12 @@
     "typeAdr": "ADR",
     "typeGuide": "Guide",
     "typeNote": "Note",
-    "typeOther": "Other"
+    "typeOther": "Other",
+    "deleteDocument": "Delete Document",
+    "deleteDocumentDescription": "This will permanently delete \"{title}\". This action cannot be undone.",
+    "deleteSuccess": "Document deleted.",
+    "deleteFailed": "Failed to delete document.",
+    "deleteFailedNotFound": "This document no longer exists."
   },
   "export": {
     "exportDocument": "Export",
@@ -851,6 +870,7 @@
     "otherOption": "Other",
     "otherPlaceholder": "Please specify...",
     "submitAnswers": "Submit answers",
+    "confirmAnswerAria": "Confirm answer",
     "submitting": "Submitting...",
     "submitFailed": "Failed to submit answers",
     "navCounter": "{current} of {total}",
