@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.2] - 2026-05-21
+
+### Added
+- **Cascade-migrate Idea on cross-project move**: `chorus_move_idea` now walks the full AI-DLC pipeline tail in one Prisma transaction — moves the Idea plus all linked Proposals (any status), all materialized Documents and Tasks, and all related Activities — instead of leaving approved-proposal artifacts stranded in the source project. Adds a Move button + dialog with a dry-run preview to the Idea detail panel, and a new `GET /api/ideas/[uuid]/move/preview` endpoint. (#268)
+- **Mermaid diagrams in Markdown content**: `mermaid` code blocks now render as diagrams in Documents, Proposals, Ideas, Tasks, and Comments via `@streamdown/mermaid`. Collapses the 14 direct `<Streamdown>` call sites onto a single `MarkdownContent` component. (#266)
+- **Delete Document from the dashboard**: New destructive Delete button in the Document detail action bar, backed by a Server Action that reuses `documentService.deleteDocument`. Agents continue to use `chorus_admin_delete_document` via MCP. Also drops the redundant Back button (the breadcrumb already covers it). (#264)
+
+### Fixed
+- **Long elaboration option labels truncated**: The shadcn Button ancestor forced `whitespace-nowrap`, so long option labels and unbreakable URLs clipped. Apply `whitespace-normal` + `overflow-wrap:anywhere` and pin the indicator to the top of multi-line content. Also adds an inline ✓ confirm button (and Enter binding) to the Other free-text input, suppressed on the last question to avoid accidental round submission. (#265)
+
+---
+
 ## [0.8.1] - 2026-05-18
 
 ### Fixed
