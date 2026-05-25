@@ -44,12 +44,10 @@ The following table summarizes every permission-gated MCP tool. Each tool has ex
 | `chorus_pm_remove_task_draft` | `proposal:write` |
 | `chorus_pm_reject_proposal` | `proposal:write` |
 | `chorus_pm_revoke_proposal` | `proposal:write` |
-| `chorus_pm_create_tasks` | `proposal:write` |
-| `chorus_add_task_dependency` | `proposal:write` |
-| `chorus_remove_task_dependency` | `proposal:write` |
 | `chorus_pm_assign_task` | `proposal:write` |
 | `chorus_pm_create_document` | `document:write` |
 | `chorus_pm_update_document` | `document:write` |
+| `chorus_create_report` | `document:write` |
 | `chorus_claim_task` | `task:write` |
 | `chorus_release_task` | `task:write` |
 | `chorus_submit_for_verify` | `task:write` |
@@ -241,7 +239,7 @@ Tools available to all Agents.
 
 ### chorus_get_ideas
 
-**Description**: Get the list of Ideas for a project
+**Description**: Get the list of Ideas for a project. Each row includes `reportCount` — number of completion reports for the idea.
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -254,7 +252,7 @@ Tools available to all Agents.
 **Output**:
 ```json
 {
-  "ideas": [...],
+  "ideas": [{ ..., "reportCount": 0 }],
   "total": 10,
   "page": 1,
   "pageSize": 20
@@ -263,14 +261,14 @@ Tools available to all Agents.
 
 ### chorus_get_idea
 
-**Description**: Get detailed information for a single Idea
+**Description**: Get detailed information for a single Idea. Includes `reports[]` — full content of the idea's completion reports, newest first.
 
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | ideaUuid | string | Yes | Idea UUID |
 
-**Output**: Idea details JSON
+**Output**: Idea details JSON, with `reports: DocumentResponse[]` (full Markdown content, sorted by `createdAt` desc; empty when none).
 
 ### chorus_get_documents
 
@@ -280,7 +278,7 @@ Tools available to all Agents.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | projectUuid | string | Yes | Project UUID |
-| type | string | No | Filter by type: prd, tech_design, adr, etc. |
+| type | string | No | Filter by type: prd, tech_design, adr, spec, guide, report |
 | page | number | No | Page number |
 | pageSize | number | No | Items per page |
 
@@ -691,11 +689,143 @@ Each task in the response includes the full TaskResponse format (with dependsOn,
 
 **Output**: Comment list JSON
 
+### chorus_create_tasks
+
+**Description**: Batch create tasks in a project. Public tool — available to any agent (no permission gate). Supports two modes:
+
+- **Quick Task** (skip Idea → Proposal): omit `proposalUuid`. Ideal for bug fixes, small features, or post-delivery patches. Lifecycle: create → claim → execute → verify → done.
+- **Proposal-linked** (traditional AI-DLC): pass `proposalUuid` to associate the new tasks with an approved proposal.
+
+Supports intra-batch dependencies via `draftUuid` + `dependsOnDraftUuids`, and dependencies on existing tasks via `dependsOnTaskUuids`.
+
+**Input**:
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| projectUuid | string | Yes | Project UUID |
+| proposalUuid | string | No | Associated Proposal UUID (omit for Quick Task mode) |
+| tasks | array | Yes | Task list |
+
+**tasks array item fields**:
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| title | string | Yes | Task title |
+| description | string | No | Task description |
+| priority | enum | No | Priority: low, medium, high |
+| storyPoints | number | No | Effort estimate (Agent hours) |
+| acceptanceCriteriaItems | array | No | Structured acceptance criteria: `[{ description: string, required?: boolean }]` |
+| draftUuid | string | No | Temporary UUID for intra-batch `dependsOnDraftUuids` references |
+| dependsOnDraftUuids | string[] | No | Intra-batch draftUuids this task depends on |
+| dependsOnTaskUuids | string[] | No | Existing Task UUIDs this task depends on |
+
+**Quick Task example**:
+```json
+{
+  "projectUuid": "8c16d9aa-...",
+  "tasks": [
+    {
+      "title": "Fix login button alignment",
+      "description": "On the /login page the submit button is misaligned on mobile breakpoints.",
+      "priority": "medium",
+      "storyPoints": 0.5
+    }
+  ]
+}
+```
+
+**Proposal-linked example with intra-batch dependencies**:
+```json
+{
+  "projectUuid": "8c16d9aa-...",
+  "proposalUuid": "e35b558c-...",
+  "tasks": [
+    {
+      "draftUuid": "draft-1",
+      "title": "Add database migration",
+      "priority": "high",
+      "storyPoints": 1
+    },
+    {
+      "draftUuid": "draft-2",
+      "title": "Wire up service layer",
+      "dependsOnDraftUuids": ["draft-1"],
+      "storyPoints": 2
+    },
+    {
+      "title": "Add API route",
+      "dependsOnDraftUuids": ["draft-2"],
+      "dependsOnTaskUuids": ["existing-task-uuid"],
+      "storyPoints": 1
+    }
+  ]
+}
+```
+
+**Output**:
+```json
+{
+  "tasks": [...],
+  "count": 3,
+  "draftToTaskUuidMap": { "draft-1": "real-uuid-1", "draft-2": "real-uuid-2" },
+  "warnings": ["..."]
+}
+```
+- `draftToTaskUuidMap`: Only returned when any task provides a `draftUuid`.
+- `warnings`: Only returned when there are issues creating dependencies or acceptance criteria (the tasks themselves are created successfully).
+
+> Note: After `chorus_admin_approve_proposal` runs, taskDrafts are auto-materialized into Tasks. Calling `chorus_create_tasks` with the same `proposalUuid` would produce duplicates — only call this for proposal-linked tasks added outside the standard draft-and-approve flow.
+
+### chorus_create_report
+
+**Description**: Persist an idea-completion summary as a Document with `type="report"` linked to the given Proposal. Call once, at end-of-Idea, after the last task verifies. This is a summary, not a detailed write-up — keep it short.
+
+The Markdown `content` MUST use these three sections in this order (the server stores bytes verbatim — these headers are a constraint, not a schema):
+
+```markdown
+## Summary
+1-3 sentences on what shipped. Plain prose. No bullet lists here.
+
+## Decisions
+Terse bullets — the key calls made during elaboration / proposal review and why this option not the alternative.
+
+## Follow-ups
+What's still open — link to a new Idea / blog / doc-update if tracked elsewhere; write "None" if there are no follow-ups.
+```
+
+**Required Permission**: `document:write` (the tool lives in the public-namespaced module — no `pm_` prefix — but is permission-gated; granted via the `pm_agent` / `admin_agent` presets, or via a custom permission added to a developer agent).
+
+**Input**:
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| proposalUuid | string (UUID) | Yes | Proposal UUID whose tasks have all reached a terminal state (`done`/`closed`) |
+| title | string (1-200 chars) | Yes | Report title (e.g. `"Idea X — completion report"`) |
+| content | string (non-empty Markdown) | Yes | Markdown body — Summary / Decisions / Follow-ups |
+
+**Output**:
+```json
+{
+  "documentUuid": "...",
+  "projectUuid": "...",
+  "version": 1
+}
+```
+
+The created Document has `type="report"` (the tool name encodes the type — agents cannot mislabel reports), `proposalUuid` set to the provided value, and `projectUuid` resolved from the Proposal. Multiple reports per Proposal are allowed by design; the body is preserved byte-faithfully (modulo the Document content path's existing trailing-newline normalization). To revise a report, use `chorus_pm_update_document` (which increments `version`).
+
+**When to author**: at the end of an Idea pipeline — once every Task linked to the Idea (across all approved Proposals) has been admin-verified to `done`. The `/yolo` skill authors a report as a mandatory end-step; the `/develop` skill prompts for one as an advisory end-step; and the Chorus plugin's PostToolUse hook injects a reminder substring after the last `chorus_admin_verify_task` of an Idea when no `report` Document yet exists.
+
 ---
 
 ## Session Tools
 
 Available to all Agents. Used to manage Agent work sessions (e.g., sub-agent workers in swarm mode).
+
+### Lifecycle and staleness
+
+The persisted state space is exactly `{active, closed}`. There is no `inactive` status — staleness is a derived predicate on `lastActiveAt`, not a stored value. Default UI listings (Settings page per-agent sessions, project worker-avatar header) only show sessions matching `status='active' AND lastActiveAt > now - 1h`. MCP-facing reads (`chorus_list_sessions`, `chorus_get_session`) and the audit-trail dereferences (Activity stream) are NOT filtered — plugins and history navigation see every session regardless of age or status.
+
+### Implicit-heartbeat contract
+
+Every Session tool that takes a `sessionUuid` parameter and successfully resolves the session refreshes `lastActiveAt = now()` as a side effect of success — except when the session's `status='closed'`, in which case the refresh is skipped to preserve the historical timestamp. Tools covered: `chorus_get_session`, `chorus_close_session`, `chorus_reopen_session`, `chorus_session_checkin_task`, `chorus_session_checkout_task`, `chorus_session_heartbeat`. As a result, plugins do not need to send standalone heartbeats during normal operation — any other session tool call already counts as one. The `chorus_session_heartbeat` tool remains as an explicit keep-alive for idle sub-agents.
 
 ### chorus_create_session
 
@@ -706,7 +836,6 @@ Available to all Agents. Used to manage Agent work sessions (e.g., sub-agent wor
 |-----------|------|----------|-------------|
 | name | string | Yes | Session name (e.g., "frontend-worker") |
 | description | string | No | Session description |
-| expiresAt | string | No | Expiration time (ISO timestamp) |
 
 **Output**:
 ```json
@@ -717,7 +846,6 @@ Available to all Agents. Used to manage Agent work sessions (e.g., sub-agent wor
   "description": "...",
   "status": "active",
   "lastActiveAt": "ISO timestamp",
-  "expiresAt": null,
   "createdAt": "ISO timestamp",
   "activeCheckins": []
 }
@@ -725,12 +853,12 @@ Available to all Agents. Used to manage Agent work sessions (e.g., sub-agent wor
 
 ### chorus_list_sessions
 
-**Description**: List all Sessions for the current Agent
+**Description**: List all Sessions for the current Agent. **Unfiltered** — returns sessions regardless of staleness or closed status (use this for plugin reuse logic and audit-trail navigation).
 
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| status | string | No | Filter by status: active, inactive, closed |
+| status | string | No | Filter by status: `active` or `closed` |
 
 **Output**:
 ```json
@@ -742,7 +870,7 @@ Available to all Agents. Used to manage Agent work sessions (e.g., sub-agent wor
 
 ### chorus_get_session
 
-**Description**: Get Session details and its active Task checkins
+**Description**: Get Session details and its active Task checkins. Refreshes the session's `lastActiveAt` as a side effect of success unless the session is `closed`.
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -753,7 +881,7 @@ Available to all Agents. Used to manage Agent work sessions (e.g., sub-agent wor
 
 ### chorus_close_session
 
-**Description**: Close a Session (active/inactive → closed). Automatically checks out all active Task checkins.
+**Description**: Close a Session (any status → closed). Automatically checks out all active Task checkins. Does not alter the underlying Tasks' `status`.
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -764,7 +892,7 @@ Available to all Agents. Used to manage Agent work sessions (e.g., sub-agent wor
 
 ### chorus_reopen_session
 
-**Description**: Reopen a closed Session (closed → active). Used to reuse a previous session without creating a new one.
+**Description**: Reopen a closed Session (closed → active). Used to reuse a previous session without creating a new one. `lastActiveAt` is refreshed as part of the reopen.
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -775,7 +903,7 @@ Available to all Agents. Used to manage Agent work sessions (e.g., sub-agent wor
 
 ### chorus_session_checkin_task
 
-**Description**: Check in a Session to a Task, indicating work has started
+**Description**: Check in a Session to a Task, indicating work has started. Refreshes `lastActiveAt`.
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -787,7 +915,7 @@ Available to all Agents. Used to manage Agent work sessions (e.g., sub-agent wor
 
 ### chorus_session_checkout_task
 
-**Description**: Check out a Session from a Task, indicating work has ended
+**Description**: Check out a Session from a Task, indicating work has ended. Refreshes `lastActiveAt`.
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -799,7 +927,7 @@ Available to all Agents. Used to manage Agent work sessions (e.g., sub-agent wor
 
 ### chorus_session_heartbeat
 
-**Description**: Session heartbeat, updates lastActiveAt. Active sessions with no heartbeat for 1 hour are automatically marked as inactive.
+**Description**: Explicit Session heartbeat — refreshes `lastActiveAt`. Most callers don't need this since every other session tool also refreshes; it exists for idle sub-agents that want to stay visible in the Settings UI without otherwise touching the session.
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -932,50 +1060,12 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | projectUuid | string | Yes | Project UUID |
-| type | enum | Yes | Document type: prd, tech_design, adr, spec, guide |
+| type | enum | Yes | Document type: prd, tech_design, adr, spec, guide, report |
 | title | string | Yes | Document title |
 | content | string | No | Document content (Markdown) |
 | proposalUuid | string | No | Associated Proposal UUID |
 
 **Output**: Created Document JSON
-
-### chorus_pm_create_tasks
-
-**Description**: Batch create tasks (can be associated with a Proposal, supports intra-batch dependencies)
-
-**Required Permission**: `proposal:write`
-
-**Input**:
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| projectUuid | string | Yes | Project UUID |
-| proposalUuid | string | No | Associated Proposal UUID |
-| tasks | array | Yes | Task list |
-
-**tasks array item fields**:
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| title | string | Yes | Task title |
-| description | string | No | Task description |
-| priority | enum | No | Priority: low, medium, high |
-| storyPoints | number | No | Effort estimate (Agent hours) |
-| acceptanceCriteria | string | No | Acceptance criteria (Markdown, legacy) |
-| acceptanceCriteriaItems | array | No | Structured acceptance criteria: `[{ description: string, required?: boolean }]` |
-| draftUuid | string | No | Temporary UUID for intra-batch dependsOnDraftUuids references |
-| dependsOnDraftUuids | string[] | No | List of intra-batch draftUuids this task depends on |
-| dependsOnTaskUuids | string[] | No | List of existing Task UUIDs this task depends on |
-
-**Output**:
-```json
-{
-  "tasks": [...],
-  "count": 3,
-  "draftToTaskUuidMap": { "draft-1": "real-uuid-1", ... },
-  "warnings": ["..."]
-}
-```
-- `draftToTaskUuidMap`: Only returned when any task provides a draftUuid
-- `warnings`: Only returned when there are issues creating dependencies (tasks themselves are created successfully)
 
 ### chorus_pm_update_document
 
@@ -1092,54 +1182,6 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 | draftUuid | string | Yes | Task draft UUID |
 
 **Output**: Updated Proposal JSON
-
-### chorus_add_task_dependency
-
-**Description**: Add a task dependency (taskUuid depends on dependsOnTaskUuid). Includes same-project validation, self-dependency check, and DFS cycle detection.
-
-**Required Permission**: `proposal:write` (kept out of `task:write` to preserve 0.6.x developer boundaries — see `permission-map.ts`)
-
-**Input**:
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| taskUuid | string | Yes | Task UUID (downstream task) |
-| dependsOnTaskUuid | string | Yes | Dependent Task UUID (upstream task) |
-
-**Output**: Created dependency JSON
-```json
-{
-  "taskUuid": "...",
-  "dependsOnUuid": "...",
-  "createdAt": "ISO timestamp"
-}
-```
-
-**Error scenarios**:
-- Self-dependency: `A task cannot depend on itself`
-- Task not found: `Task not found` / `Dependency task not found`
-- Cross-project: `Tasks must belong to the same project`
-- Cycle detected: `Adding this dependency would create a cycle`
-
-### chorus_remove_task_dependency
-
-**Description**: Remove a task dependency
-
-**Required Permission**: `proposal:write`
-
-**Input**:
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| taskUuid | string | Yes | Task UUID |
-| dependsOnTaskUuid | string | Yes | Dependency Task UUID to remove |
-
-**Output**:
-```json
-{
-  "success": true,
-  "taskUuid": "...",
-  "dependsOnTaskUuid": "..."
-}
-```
 
 ### chorus_pm_assign_task
 
@@ -1334,22 +1376,71 @@ Tools gated by `task:write`. Available to any agent whose effective permissions 
 
 ### chorus_update_task
 
-**Description**: Update task status and fields (only the assignee can perform status transitions; any agent with read access can edit fields like title, description, priority, storyPoints).
+**Description**: Update a task — edit fields, manage dependencies, or change status.
 
-> **Public tool** — not permission-gated. Available to every agent. Handler-level guards enforce that only the assignee can transition `status`. Moved from developer tools to public in 0.7.0 as part of the permission refactor.
+> **Public tool** — not permission-gated. Available to every agent. Field edits and dependency edits require no special permission; status transitions are still gated at the handler level to the task's assignee.
+
+Two distinct edit modes can be combined in a single call:
+
+- **Field editing** (any agent): `title`, `description`, `priority`, `storyPoints`, `addDependsOn`, `removeDependsOn`.
+- **Status update** (assignee only): `status` (`in_progress` requires all dependencies resolved; `to_verify` submits for human verification).
 
 **Input**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | taskUuid | string | Yes | Task UUID |
-| status | enum | Yes | New status: in_progress, to_verify |
-| sessionUuid | string | No | Associated Session UUID (used to attribute which worker performed the action) |
+| title | string | No | New task title |
+| description | string | No | New task description (supports @mentions) |
+| priority | enum | No | New priority: low, medium, high |
+| storyPoints | number | No | New effort estimate (agent hours) |
+| addDependsOn | string[] | No | Task UUIDs to add as dependencies (incremental) |
+| removeDependsOn | string[] | No | Task UUIDs to remove from dependencies (incremental) |
+| status | enum | No | New status: in_progress, to_verify (assignee only) |
+| sessionUuid | string | No | Associated Session UUID (attributes which worker performed the action) |
 
 **Behavior**:
 - When `sessionUuid` is provided, the Activity record includes session attribution, and a session heartbeat is automatically sent.
+- `addDependsOn` / `removeDependsOn` accept arrays — multiple dependency edits are applied in a single call. Each entry is validated independently (same-project check, self-dependency check, DFS cycle detection); per-entry failures surface in the `warnings` array of the response without rolling back successful edits.
 - **Dependency enforcement**: When transitioning to `in_progress`, the system checks that all `dependsOn` tasks are resolved (`done` or `closed`). If any dependency is unresolved, the request is rejected with a detailed error listing each blocker's title, status, assignee, and active session info. Use `chorus_get_unblocked_tasks` to find tasks that are ready to start.
 
-**Output**: Updated Task JSON (or error with blocker details if dependencies are unresolved)
+**Add a dependency**:
+```json
+{
+  "taskUuid": "downstream-task-uuid",
+  "addDependsOn": ["upstream-task-uuid"]
+}
+```
+
+**Remove a dependency**:
+```json
+{
+  "taskUuid": "downstream-task-uuid",
+  "removeDependsOn": ["upstream-task-uuid"]
+}
+```
+
+**Swap dependencies in one call (replace upstream A with upstream B)**:
+```json
+{
+  "taskUuid": "downstream-task-uuid",
+  "addDependsOn": ["upstream-b-uuid"],
+  "removeDependsOn": ["upstream-a-uuid"]
+}
+```
+
+**Combine field edit, dependency edit, and status transition**:
+```json
+{
+  "taskUuid": "...",
+  "title": "Refined task title",
+  "priority": "high",
+  "addDependsOn": ["new-dep-uuid"],
+  "status": "in_progress",
+  "sessionUuid": "..."
+}
+```
+
+**Output**: Updated Task JSON. If dependency edits produced any per-entry failures, a `warnings: string[]` field is included. On a rejected `in_progress` transition, returns an error with blocker details instead.
 
 ### chorus_submit_for_verify
 
@@ -1413,7 +1504,7 @@ Tools gated by one of the `*:admin` permissions or `project:write`. Available to
 - `documentDrafts` → Automatically creates corresponding Documents (linked to this Proposal)
 - `taskDrafts` → Automatically creates corresponding Tasks (linked to this Proposal)
 
-Therefore, after approval there is **no need** to manually call `chorus_pm_create_tasks` or `chorus_pm_create_document` to create these resources, as doing so would produce duplicate data. `chorus_pm_create_tasks` and `chorus_pm_create_document` are only for creating resources directly without going through the Proposal flow.
+Therefore, after approval there is **no need** to manually call `chorus_create_tasks` or `chorus_pm_create_document` to create these resources, as doing so would produce duplicate data. `chorus_create_tasks` and `chorus_pm_create_document` are only for creating resources directly without going through the Proposal flow.
 
 **Input**:
 | Parameter | Type | Required | Description |
@@ -1644,7 +1735,7 @@ Therefore, after approval there is **no need** to manually call `chorus_pm_creat
 | 21 | chorus_pm_submit_proposal | Submit Proposal for approval | ✅ Pass | draft → pending (**new tool**) |
 | 22 | chorus_admin_approve_proposal | Approve Proposal | ✅ Pass | pending → approved, ⚠️ auto-creates tasks and documents from drafts |
 | 23 | chorus_add_comment (proposal) | Comment on Proposal | ✅ Pass | |
-| 24 | chorus_pm_create_tasks | Batch create tasks | ✅ Pass | ⚠️ If approve already auto-created, manual call produces duplicates |
+| 24 | chorus_create_tasks | Batch create tasks | ✅ Pass | ⚠️ If approve already auto-created, manual call produces duplicates |
 | 25 | chorus_pm_create_document | Create document | ✅ Pass | version=1 |
 | 26 | chorus_pm_update_document | Update document | ✅ Pass | version auto-increments to 2 |
 | 27 | chorus_list_tasks | List tasks | ✅ Pass | |
@@ -1691,4 +1782,4 @@ Therefore, after approval there is **no need** to manually call `chorus_pm_creat
 
 #### Note: `admin_approve_proposal` auto-materializes drafts (Documented ✅)
 - Approving a Proposal automatically materializes drafts into actual Tasks and Documents
-- After approval, there is no need to manually call `pm_create_tasks` or `pm_create_document`
+- After approval, there is no need to manually call `chorus_create_tasks` or `chorus_pm_create_document`

@@ -14,6 +14,7 @@ vi.mock("@/services/task.service", () => ({}));
 vi.mock("@/services/proposal.service", () => ({}));
 vi.mock("@/services/activity.service", () => ({}));
 vi.mock("@/services/session.service", () => ({}));
+vi.mock("@/services/checkin.service", () => ({}));
 vi.mock("@/services/idea.service", () => ({}));
 vi.mock("@/services/document.service", () => ({}));
 vi.mock("@/services/comment.service", () => ({}));
@@ -31,6 +32,7 @@ import { ROLE_PRESETS } from "@/lib/authz/presets";
 import { registerPmTools } from "@/mcp/tools/pm";
 import { registerDeveloperTools } from "@/mcp/tools/developer";
 import { registerAdminTools } from "@/mcp/tools/admin";
+import { registerPublicTools } from "@/mcp/tools/public";
 import { TOOL_PERMISSIONS } from "@/mcp/tools/permission-map";
 
 // Minimal McpServer stand-in: records every tool name that gets registered.
@@ -55,8 +57,12 @@ function makeAuth(permissions: Permission[]): AgentAuthContext {
   };
 }
 
-// Register all three gated tool modules with the given permissions and return
-// the set of registered tool names (names only, deterministic order doesn't matter).
+// Register every gated tool module (pm/developer/admin and the public-namespaced
+// gated tools in public.ts) with the given permissions, then keep only the names
+// that appear in TOOL_PERMISSIONS — i.e. tools that go through
+// `registerPermissionedTool`. Non-gated public.ts tools (chorus_get_project,
+// chorus_add_comment, etc.) are intentionally filtered out so the assertions
+// below stay focused on the gated surface.
 function registeredFor(permissions: Permission[]): Set<string> {
   const { server, names } = makeCapturingServer();
   const auth = makeAuth(permissions);
@@ -66,11 +72,21 @@ function registeredFor(permissions: Permission[]): Set<string> {
   registerDeveloperTools(server as any, auth);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   registerAdminTools(server as any, auth);
-  return new Set(names);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  registerPublicTools(server as any, auth);
+  const gated = new Set(Object.keys(TOOL_PERMISSIONS));
+  return new Set(names.filter((n) => gated.has(n)));
 }
 
 // 0.6.x tool lists captured from pm.ts / developer.ts / admin.ts before this
 // refactor. Used for strict-equality / superset assertions.
+//
+// 0.9.0 note (proposal e35b558c): three redundant pm-surface tools were removed
+// from this baseline — the deprecated batch-create-tasks alias (covered by the
+// public batch-create-tasks tool) and the two add/remove-task-dependency tools
+// (covered by the update-task tool's incremental dependency arrays). See
+// permission-map.ts and pm.ts; the names are intentionally not spelled here so
+// downstream grep checks stay clean.
 const OLD_PM_TOOLS = [
   "chorus_claim_idea",
   "chorus_release_idea",
@@ -78,7 +94,6 @@ const OLD_PM_TOOLS = [
   "chorus_pm_validate_proposal",
   "chorus_pm_submit_proposal",
   "chorus_pm_create_document",
-  "chorus_pm_create_tasks",
   "chorus_pm_update_document",
   "chorus_pm_add_document_draft",
   "chorus_pm_add_task_draft",
@@ -86,8 +101,6 @@ const OLD_PM_TOOLS = [
   "chorus_pm_update_task_draft",
   "chorus_pm_remove_document_draft",
   "chorus_pm_remove_task_draft",
-  "chorus_add_task_dependency",
-  "chorus_remove_task_dependency",
   "chorus_pm_assign_task",
   "chorus_pm_start_elaboration",
   "chorus_pm_validate_elaboration",
@@ -185,12 +198,15 @@ describe("MCP tool permission wiring", () => {
   });
 
   describe("backward-compat: admin_agent preset (AC6)", () => {
-    it("admin_agent sees exactly the union of 0.6.x admin + pm + developer tool sets", () => {
+    it("admin_agent sees exactly the union of 0.6.x admin + pm + developer tool sets plus 0.9.0 chorus_create_report", () => {
       const registered = registeredFor([...ROLE_PRESETS.admin_agent]);
       const expected = new Set([
         ...OLD_ADMIN_TOOLS,
         ...OLD_PM_TOOLS,
         ...OLD_DEVELOPER_TOOLS,
+        // 0.9.0: public-namespaced, document:write-gated. admin_agent carries
+        // document:write so the tool is visible to admin presets.
+        "chorus_create_report",
       ]);
       expect(registered).toEqual(expected);
     });
@@ -236,6 +252,10 @@ describe("MCP tool permission wiring", () => {
       expect(TOOL_PERMISSIONS.chorus_admin_update_project_group).toBe("project:write");
       expect(TOOL_PERMISSIONS.chorus_admin_delete_project_group).toBe("project:write");
       expect(TOOL_PERMISSIONS.chorus_admin_move_project_to_group).toBe("project:write");
+    });
+
+    it("chorus_create_report is gated on document:write (AC2 of add-idea-completion-report)", () => {
+      expect(TOOL_PERMISSIONS.chorus_create_report).toBe("document:write");
     });
   });
 });

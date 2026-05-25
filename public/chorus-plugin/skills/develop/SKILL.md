@@ -4,7 +4,7 @@ description: Chorus Development workflow — claim tasks, report work, manage se
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.8.3"
+  version: "0.9.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -254,6 +254,10 @@ If the reviewer returns **FAIL**, or the task is reopened after verification:
 
 Once Admin verifies (status: `done`), move to the next available task (back to Step 2).
 
+### Step 11: Idea Completion Report (advisory)
+
+If the task you just self-verified was the LAST one of its Idea (every Task across every approved Proposal is now `done`/`closed`) and you have `document:write`, offer to call `chorus_create_report` via `AskUserQuestion`. The tool description carries the section template. Skip on decline — the PostToolUse hook will remind on the next run.
+
 ---
 
 ## Session (Sub-Agents Only)
@@ -360,7 +364,7 @@ Sub-agents need MCP configured at **project level** (`.mcp.json` or `.claude/set
 |---------|----------|
 | Sub-agent can't access Chorus MCP tools | Verify MCP is configured at project level, API key has developer role |
 | UI doesn't show active workers | Sub-agent forgot `chorus_session_checkin_task`. Check: `chorus_get_session` |
-| Session shows "inactive" (yellow) | No heartbeat in 1h. TeammateIdle hook should auto-send. Agent may have crashed |
+| Session disappears from Settings | No activity for 1h (default lists hide stale sessions). The session row still exists — it's reachable via MCP `chorus_list_sessions` / `chorus_get_session`. Send a heartbeat (or any session-touching tool) to make it visible again, or check whether the agent crashed |
 | Task stuck in wrong status | Spawn new sub-agent with same name (plugin auto-reopens session), or use `chorus_update_task` to reset |
 | Duplicate sessions | Never call `chorus_create_session` — plugin handles all session creation. Close extras via Settings page |
 | Sub-agent didn't receive session | Check plugin is loaded (`/plugin list`) and `CHORUS_URL` is set. Ensure `name` parameter is set |

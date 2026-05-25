@@ -4,7 +4,7 @@ description: Full-auto AI-DLC pipeline — from prompt to done. Automates the en
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.8.3"
+  version: "0.9.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -464,6 +464,12 @@ After all waves complete, output a markdown summary:
 - Escalated: Y (need human review)
 - Waves executed: W
 ```
+
+---
+
+### Phase 5b: Idea Completion Report (mandatory)
+
+A successful `/yolo` run always finishes the Idea — call `chorus_create_report` once with `proposalUuid` set to the last verified proposal. The tool's description carries the section template; follow it. Surface the returned `documentUuid` in the Phase 5 summary. Skipping is a protocol violation.
 
 ---
 
