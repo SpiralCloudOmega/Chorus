@@ -12,6 +12,7 @@ import {
   Send,
   RefreshCw,
   AtSign,
+  Flag,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { staggerItem } from "@/lib/animation";
@@ -82,6 +83,8 @@ function getTypeIcon(action: string) {
       return { Icon: Send, color: "text-blue-500" };
     case "task_status_changed":
       return { Icon: RefreshCw, color: "text-blue-500" };
+    case "report_created":
+      return { Icon: Flag, color: "text-emerald-600" };
     default:
       return { Icon: Send, color: "text-muted-foreground" };
   }
@@ -111,8 +114,15 @@ function useRelativeTime(t: ReturnType<typeof useTranslations>) {
 // ===== Entity navigation =====
 
 function getEntityPath(notification: Notification): string {
-  const { entityType, entityUuid, projectUuid } = notification;
+  const { action, entityType, entityUuid, projectUuid } = notification;
   const base = `/projects/${projectUuid}`;
+  // Reports notify on the parent Idea (entityType: "idea"). Deep-link to the
+  // dashboard's Idea panel — `panel=<ideaUuid>` selects which Idea to open and
+  // `tab=overview` opens the overview tab where ReportsList renders inline
+  // (matching `move-idea-dialog.tsx` and `[ideaUuid]/page.tsx`).
+  if (action === "report_created") {
+    return `${base}/dashboard?panel=${entityUuid}&tab=overview`;
+  }
   switch (entityType) {
     case "task":
       return `${base}/tasks/${entityUuid}`;
