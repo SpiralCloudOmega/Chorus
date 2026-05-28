@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.9.1] - 2026-05-28
+
+### Added
+- **Real-time notifications for report creation**: Creating a Document with `type="report"` via `chorus_create_report` now emits SSE events (`document/created` + `idea/updated`) and records an idea-targeted Activity that fans out to bell-popup notifications for the Idea creator, assignee, and their human owners. Bell clicks deep-link to the dashboard's Idea panel. Side-effect steps in `document.service` are best-effort so emit failures cannot roll back the document insert. (#279)
+- **`force` flag on `chorus_create_report`**: New optional `force: boolean` (default `false`) parameter. When omitted/false against a proposal that already has a report, the call returns an MCP error and writes nothing — closes a duplicate-report bug observed in `/yolo` runs where two independent paths (PostToolUse hook reminder + skill Phase 5b end-step) both fired against the same proposal. `force=true` preserves the prior multi-report semantics for explicit re-authoring. (#281)
+
+### Fixed
+- **IME composition lost text on Enter**: CJK / Japanese / Korean IME users were losing in-progress text when they pressed Enter to confirm a candidate word — the keystroke fired form submit / dialog close / search navigation instead. New shared `isImeComposing(e)` helper in `src/lib/ime.ts` (checks `nativeEvent.isComposing` + Safari `keyCode === 229` fallback) short-circuits 7 affected handlers across 6 files. CLAUDE.md gains a Frontend UI Rule so future Enter handlers route through the helper. (#280, #282)
+
+---
+
 ## [0.9.0] - 2026-05-25
 
 ### Added
