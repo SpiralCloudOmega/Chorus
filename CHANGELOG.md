@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.9.2] - 2026-06-01
+
+### Added
+- **`section` param on `chorus_get_proposal`**: New optional `section` enum (`basic` | `documents` | `tasks` | `full`), defaulting to `basic`. The default now returns proposal metadata plus a lightweight index of the drafts (uuid/type/title/contentLength for docs; uuid/title/priority/storyPoints/acceptanceCriteriaCount/dependsOnDraftUuids for tasks) with no heavy bodies, instead of the entire proposal on every call. Callers drill into `documents`/`tasks`/`full` on the same `proposalUuid` when they need content. Implemented as a pure `getProposalSection()` projection layered on the untouched `getProposal()`, so the REST route and frontend are unaffected. (#287)
+
+### Fixed
+- **@-mention popup not clickable inside modal dialogs**: The mention suggestion popup was appended to `document.body`, so when the editor was hosted inside a Radix Dialog (e.g. the proposal comments Sheet) it inherited `pointer-events:none` and could be selected by keyboard but not clicked — and clicking it dismissed the dialog. The popup now mounts inside the editor's own wrapper (a descendant of the dialog content), inheriting `pointer-events:auto` while `position:fixed` still escapes overflow clipping. (#289)
+- **Long notification content clipped off-screen**: Notifications with very long project names, titles, or actor names overflowed the dropdown and were clipped invisible. Bound the ScrollArea viewport content column to the popup width and switched badge/title/action/actor lines to `break-words` so long content wraps instead of overflowing. (#288)
+
+### Plugin
+- **OpenClaw plugin rewritten for the OpenClaw 2026.4.27+ Plugin SDK** (→ 0.5.1): Replaces the legacy hand-wrapped-tools + HTTP-hook design with native MCP registration (`mutateConfigFile`), a `definePluginEntry` entry with `activation.onStartup`, SSE→agent wake via `runEmbeddedAgent`, reviewers converted from Claude-Code agent definitions into OpenClaw skills, an npm publish path shipping `src` + compiled `dist`, and 66 new unit tests. (#286)
+- **Claude Code & Codex plugins → 0.9.1**: Patch bump tracking the `chorus_get_proposal` section work across all skill trees (proposal-reviewer → `section:full`, task-reviewer/develop → `section:documents`), plus the Codex `chorus-mcp-call.sh` clientInfo fix. (#287)
+
+---
+
 ## [0.9.1] - 2026-05-28
 
 ### Added
