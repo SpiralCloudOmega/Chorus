@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.3] - 2026-06-03
+
+### Changed
+- **Acceptance criteria now required on task create/edit**: A non-empty acceptance-criteria set is now an invariant of every task and task draft. A shared validator (`src/lib/acceptance-criteria.ts`) is the single source of truth for both the proposal service and the public MCP tool handlers. `chorus_pm_add_task_draft` / `chorus_create_tasks` reject missing or all-blank AC at creation (`create_tasks` is all-or-nothing — one bad task rejects the whole batch). `chorus_pm_update_task_draft` / `chorus_update_task` use partial semantics: AC provided must be non-empty (replaces existing), AC omitted is preserved — so status transitions and dependency edits keep working without resending AC. `chorus_update_task` gains an optional `acceptanceCriteriaItems` param with replace semantics. No schema/migration change; existing AC-less tasks are untouched until next edited. (#291)
+
+### Plugin
+- **Standalone skill surface aligned to 0.9.3**: The curl-installable `/skill/` distribution gains a `yolo-chorus` full-auto lifecycle skill plus `proposal-reviewer-chorus` and `task-reviewer-chorus` read-only adversarial reviewer skills (learning from the Codex plugin's skill-based reviewers). All reviewer references are unified to a framework-neutral "spawn a read-only sub-agent, load the reviewer skill, read its VERDICT comment" pattern instead of the Claude-Code-only `chorus:*-reviewer` agent types. Also registers the previously-unregistered `quick-dev-chorus` and `brainstorm-chorus` skills. (#293)
+- **Codex plugin hook loading fixed**: The Codex plugin now uses plugin-bundled hooks instead of copied user hooks, refreshes its docs/skills for current hook support, and the installer offers to clean legacy Chorus hook entries. (#292)
+- **Claude Code & Codex plugins → 0.9.3**: Version bump across marketplace.json, plugin.json, and all 9 skills to match. The "acceptance criteria required" guidance is synced across all four skill surfaces (Claude Code, Codex, OpenClaw, standalone). OpenClaw intentionally stays on its own version sequence. (#291, #293)
+
+---
+
 ## [0.9.2] - 2026-06-01
 
 ### Added
