@@ -104,9 +104,9 @@ interface RoundCardProps {
 
 function RoundCard({ round, ideaUuid, onAnswered }: RoundCardProps) {
   const t = useTranslations("elaboration");
-  // `needs_followup` means all questions in this round were answered, but
-  // validation flagged issues — a new follow-up round handles those.
-  // So this round should display as "done" (read-only Q&A view).
+  // `needs_followup` is a legacy round status no longer written by the service
+  // (the per-question issue / follow-up mechanism was removed). Kept here only
+  // so any historical rows still render as "done" (read-only Q&A view).
   const isPending = round.status === "pending_answers";
   const isDone =
     round.status === "answered" ||
@@ -148,6 +148,14 @@ function RoundCard({ round, ideaUuid, onAnswered }: RoundCardProps) {
               <span className="text-[13px] font-semibold text-[#2C2C2C]">
                 {t("roundLabel", { number: round.roundNumber })}
               </span>
+
+              {/* Appended (follow-up) badge — muted accent, distinct from
+                  the round-number badge and the status badge */}
+              {round.isAppended && (
+                <span className="rounded bg-[#EDE7F6] px-2 py-0.5 text-[10px] font-medium text-[#6A4FB6]">
+                  {t("appendedBadge")}
+                </span>
+              )}
 
               {/* Question count (shown when collapsed) */}
               {!isOpen && (
