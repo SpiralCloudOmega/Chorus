@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.9.4] - 2026-06-08
+
+### Added
+- **Agent install guide in Settings key-creation dialog**: Creating an agent API key from Settings used to dead-end on the raw key with no setup guidance, while onboarding had a full 5-client install guide. The guide is extracted into a shared `AgentInstallGuide` component (single source of truth for both surfaces) and rendered inline in the create-key success state with the freshly created key embedded, so users can connect their agent right where they got the key. Onboarding refactored to consume the same component (behavior-preserving). (#295)
+
+### Changed
+- **Elaboration flow simplified — unified round generation, optional roundUuid, idea-level resolve**: `chorus_pm_start_elaboration` now generates any round (first, follow-up, or appended-after-resolution) and is callable both while elaborating and after the Idea is resolved; appended rounds set `isAppended=true` and keep the Idea resolved so an in-flight proposal is never re-blocked. `chorus_answer_elaboration`'s `roundUuid` is optional — auto-locates the single active (`pending_answers`) round. `chorus_pm_validate_elaboration` is re-scoped to a pure idea-level resolve action: takes only `ideaUuid` (no `roundUuid`), gated on `idea:admin`, requires human confirmation (except YOLO), with precondition "≥1 round and every round answered" — never mutates round status. A round's only active states are now `pending_answers → answered`; `validated`/`needs_followup` are legacy-only. New `ElaborationRound.isAppended` column (DDL-only migration); UI surfaces a "Follow-up" badge on appended round cards. Skills across all four surfaces (Claude Code, Codex, OpenClaw, standalone) make the loop explicit: re-enter `start_elaboration` when answers derive new questions or the human raises a concern at the resolve gate; resolve only once the loop has settled. (#296, #297)
+- **Task edit UI's acceptance-criteria editor aligned with Task Draft**: The real Task edit form previously rendered AC as a single legacy Markdown textarea while the Task Draft panel used a structured rows editor — the two surfaces had drifted apart. The structured AC editor is extracted into a shared controlled component so both panels render the same UI by construction. Real-task edits persist through the existing `replaceAcceptanceCriteria` service via a small extension to `updateTaskFieldsAction`. Client-side change detection ensures the destructive replace runs only when the criteria set actually changed, so verification marks survive non-AC edits. (#299)
+
+### Plugin
+- **Claude Code plugin → 0.9.4** and **Codex plugin → 0.9.4**: Lockstep version bump for the elaboration flow simplification. All four skill surfaces (Claude Code, Codex, OpenClaw, standalone) updated with the explicit ask→answer loop guidance, `validate` reduced to ideaUuid-only, and the appended-round semantics. (#296, #297)
+- **OpenClaw plugin → 0.5.3** (skills 0.9.4): Independent package version bump tracking the elaboration flow simplification. (#296)
+
+---
+
 ## [0.9.3] - 2026-06-03
 
 ### Changed

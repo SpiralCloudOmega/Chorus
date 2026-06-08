@@ -4,7 +4,7 @@ description: Full-auto AI-DLC pipeline — from prompt to done. Automates the en
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.9.3"
+  version: "0.9.4"
   category: project-management
   mcp_server: chorus
 ---
@@ -138,6 +138,8 @@ chorus_claim_idea({ ideaUuid: "<idea-uuid>" })
 
 In /yolo mode, the agent generates elaboration questions and answers them itself -- no `AskUserQuestion` calls. This preserves an audit trail without interrupting the user.
 
+> **Self-elaboration is still a loop.** If answering your own questions surfaces a **new question, contradiction, or gap**, loop back to `chorus_pm_start_elaboration` for another self-answered round before resolving — don't force a resolve over unresolved ambiguity. There is no human gate in YOLO, so the loop exits on **your** judgment that nothing material is left open (round cap 10). Steps 1–2 are one round; repeat them as needed, then resolve once in Step 3.
+
 1. **Generate and submit questions:**
    ```
    chorus_pm_start_elaboration({
@@ -170,14 +172,15 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
    })
    ```
 
-3. **Validate** (no issues in self-mode):
+3. **Resolve** — in YOLO mode the agent resolves elaboration **autonomously, with no human-confirmation gate** (the human-confirmation requirement that applies to the interactive `/idea` flow is explicitly waived under `/yolo` automation):
+
    ```
    chorus_pm_validate_elaboration({
-     ideaUuid: "<idea-uuid>",
-     roundUuid: "<round-uuid>",
-     issues: []
+     ideaUuid: "<idea-uuid>"
    })
    ```
+
+   > `chorus_pm_validate_elaboration` requires `idea:admin`. `/yolo` already mandates an Admin-preset key in Prerequisites, so this is satisfied. To open another self-elaboration round instead of resolving, just call `chorus_pm_start_elaboration` again.
 
 #### Step 1.4: Create Proposal
 

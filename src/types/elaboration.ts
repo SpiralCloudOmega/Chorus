@@ -5,6 +5,10 @@ export type ElaborationDepth = "minimal" | "standard" | "comprehensive";
 
 export type ElaborationStatus = "pending_answers" | "validating" | "resolved";
 
+// A round's only active states are "pending_answers" → "answered". Resolution
+// is an Idea-level action (elaborationStatus = "resolved"), not a per-round one,
+// so the service no longer writes "validated" or "needs_followup" to rounds —
+// both are retained for legacy data only and read the same as "answered".
 export type RoundStatus = "pending_answers" | "answered" | "validated" | "needs_followup";
 
 export type QuestionCategory =
@@ -14,8 +18,6 @@ export type QuestionCategory =
   | "technical_context"
   | "user_scenario"
   | "scope";
-
-export type ValidationIssueType = "contradiction" | "ambiguity" | "incomplete";
 
 export interface QuestionOption {
   id: string;
@@ -35,12 +37,6 @@ export interface AnswerInput {
   questionId: string;
   selectedOptionId: string | null;
   customText: string | null;
-}
-
-export interface ValidationIssueInput {
-  questionId: string;
-  type: ValidationIssueType;
-  description: string;
 }
 
 // Response types
@@ -68,6 +64,7 @@ export interface ElaborationRoundResponse {
   uuid: string;
   roundNumber: number;
   status: string;
+  isAppended: boolean;
   createdBy: { type: string; uuid: string };
   validatedAt: string | null;
   questions: ElaborationQuestionResponse[];

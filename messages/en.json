@@ -690,6 +690,7 @@
     "created": "Created",
     "apiKeyCreated": "API Key Created",
     "apiKeyCreatedDesc": "Copy this key now. You won't be able to see it again!",
+    "installGuideIntro": "Connect your agent now — pick your client below. The key above is embedded in the snippets and won't be shown again.",
     "name": "Name",
     "namePlaceholder": "My Agent Key",
     "agentRoles": "Agent Roles",
@@ -868,6 +869,7 @@
     "validated": "Validated",
     "pendingAnswers": "Pending answers",
     "statusAnswered": "Answered",
+    "appendedBadge": "Follow-up",
     "noAnswer": "No answer",
     "otherOption": "Other",
     "otherPlaceholder": "Please specify...",
@@ -983,7 +985,8 @@
     "gateReady": "All required criteria passed",
     "addCriterion": "Add Criterion",
     "removeCriterion": "Remove",
-    "criterionPlaceholder": "Describe the acceptance criterion..."
+    "criterionPlaceholder": "Describe the acceptance criterion...",
+    "atLeastOneRequired": "At least one acceptance criterion with a non-empty description is required."
   },
   "onboarding": {
     "skip": "Skip for now",

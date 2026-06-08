@@ -691,6 +691,7 @@
     "created": "创建于",
     "apiKeyCreated": "API 密钥已创建",
     "apiKeyCreatedDesc": "请立即复制此密钥。您将无法再次查看它！",
+    "installGuideIntro": "现在就连接你的智能体——在下方选择你的客户端。上方密钥已嵌入到代码片段中，且不会再次显示。",
     "name": "名称",
     "namePlaceholder": "我的智能体密钥",
     "agentRoles": "智能体角色",
@@ -869,6 +870,7 @@
     "validated": "已验证",
     "pendingAnswers": "待回答",
     "statusAnswered": "已回答",
+    "appendedBadge": "后续补充",
     "noAnswer": "未回答",
     "otherOption": "其他",
     "otherPlaceholder": "请说明...",
@@ -984,7 +986,8 @@
     "gateReady": "所有必需标准已通过",
     "addCriterion": "添加标准",
     "removeCriterion": "移除",
-    "criterionPlaceholder": "描述验收标准..."
+    "criterionPlaceholder": "描述验收标准...",
+    "atLeastOneRequired": "至少需要一条非空的验收标准。"
   },
   "onboarding": {
     "skip": "暂时跳过",
