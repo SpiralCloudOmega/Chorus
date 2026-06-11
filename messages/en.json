@@ -176,6 +176,8 @@
     "title": "Super Admin",
     "dashboard": "Dashboard",
     "welcome": "Welcome to Chorus Super Admin",
+    "email": "Email",
+    "emailPlaceholder": "you@company.com",
     "password": "Password",
     "passwordPlaceholder": "Enter password",
     "signingIn": "Signing in...",
@@ -751,6 +753,14 @@
       "loading": "Loading workspaces...",
       "noCandidates": "No workspaces found for this email.",
       "errorLoading": "Failed to load workspaces. Please try again."
+    },
+    "rolePicker": {
+      "title": "This email can sign in more than one way. Choose how to continue.",
+      "superAdmin": "Sign in as Super Admin",
+      "regularUser": "Sign in with password",
+      "oidcCompany": "Sign in with {company}",
+      "oidcCompanyFallback": "Sign in with SSO",
+      "back": "Use a different email"
     }
   },
   "projectOverview": {
