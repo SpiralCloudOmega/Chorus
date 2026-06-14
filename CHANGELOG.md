@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.10.0] - 2026-06-14
+
+### Added
+- **Single-parent idea lineage**: Ideas now form a forest via an `Idea.parentUuid` self-relation. You can derive a child idea from a parent, reparent an existing idea (cycle-checked, same-project), and see a weak read-only "+N derived" rollup that never blocks either idea's elaboration / proposal / task flow. New `chorus_edit_idea` MCP tool (title / content / parentUuid, gated on `idea:write`) replaces the interim `set_idea_parent`; `chorus_pm_create_idea` gains `parentUuid`; `chorus_get_idea` / `chorus_get_ideas` expose lineage. REST adds `parentUuid` on idea-create and `PATCH /api/ideas/[uuid]/parent`. UI gains a tracker flat/lineage toggle with an indented blood-lineage view and an idea-detail Lineage section (parent breadcrumb, set-parent picker with descendant cycle-block, derived children). Human web edits and reparenting now record activity-timeline entries. DDL-only migration. (#307, #309)
+
+### Changed
+- **Dashboard is now the primary idea surface**: Unified the Overview tab's two segmented controls into one adaptive Ideas / Lineage / Stats 3-way switch with New Idea standalone, defaulting to the lineage view when a project has derivation and persisting manual choice per-project. The standalone Idea List page is removed — its RESTful URLs (`/projects/:p/ideas`, `/ideas/:ideaUuid`, `?idea=`) now 308-redirect into the Dashboard, the Ideas sidebar nav item is dropped, and internal idea links (search, notifications, stat cards) point straight at `/dashboard`. (#310, #311)
+- **Idea Tracker header shows project identity**: The dashboard header now promotes the project name to the H1 and surfaces the project description as the subtitle (falling back to the generic subtitle when empty), with "Overview" demoted to a small eyebrow label. (#312)
+
+### Fixed
+- **Superadmin login on email collision**: When `SUPER_ADMIN_EMAIL` matches a registered/default user (common in local dev), the login flow gave the superadmin no way in. `identify()` now returns a `multi_role` response on collision and the login page renders a role-picker routing each choice to its existing flow; `/login/admin` accepts an editable email in the up-front collision flow. Auth endpoints unchanged; i18n en + zh. (#306)
+- **Lineage navigation in Overview**: Clicking a parent/child idea (or the post-derive child) in the Overview Lineage section changed the URL but kept the same idea rendered, because the query-only `router.push` fired no popstate. Lineage navigation now threads the parent's `openPanel`, behaving identically to a list-row click. (#313)
+
+### Plugin
+- **Claude Code & Codex plugins → 0.10.0, OpenClaw plugin → 0.10.0** (from 0.5.3): Lockstep bump for the idea-lineage feature. All four skill surfaces (Claude Code, Codex, OpenClaw, standalone) updated with the derive / reparent / weak-rollup guidance and the `chorus_edit_idea` tool. (#307)
+
+---
+
 ## [0.9.4] - 2026-06-08
 
 ### Added

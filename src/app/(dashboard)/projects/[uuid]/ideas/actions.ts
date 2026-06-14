@@ -59,10 +59,15 @@ export async function updateIdeaAction(input: UpdateIdeaInput) {
   }
 
   try {
-    const idea = await updateIdea(input.ideaUuid, auth.companyUuid, {
-      title: input.title,
-      content: input.content,
-    });
+    const idea = await updateIdea(
+      input.ideaUuid,
+      auth.companyUuid,
+      {
+        title: input.title,
+        content: input.content,
+      },
+      { actorType: auth.type, actorUuid: auth.actorUuid },
+    );
 
     revalidatePath(`/projects/${input.projectUuid}/ideas`);
     return { success: true, idea };
@@ -90,7 +95,7 @@ export async function deleteIdeaAction(ideaUuid: string, projectUuid: string) {
 
 /**
  * Fetch enriched ideas data for client-side refetch (SSE-driven updates).
- * Mirrors the data enrichment in ideas-page-content.tsx server component.
+ * Mirrors the data enrichment performed by the Dashboard tracker's server load.
  */
 export async function fetchIdeasAction(projectUuid: string) {
   const auth = await getServerAuthContext();

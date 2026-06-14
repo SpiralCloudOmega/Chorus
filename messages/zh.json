@@ -67,6 +67,8 @@
     "ideaClaimed": "{actor} 认领了此想法",
     "ideaReleased": "{actor} 释放了此想法",
     "ideaStatusChanged": "{actor} 更改了想法状态",
+    "ideaEdited": "{actor} 编辑了想法",
+    "ideaReparented": "{actor} 更改了想法的父级",
     "elaborationStarted": "{actor} 发起了需求澄清",
     "elaborationAnswered": "{actor} 回答了需求澄清",
     "elaborationSkipped": "{actor} 跳过了需求澄清",
@@ -128,7 +130,6 @@
     "projects": "项目",
     "settings": "设置",
     "overview": "概览",
-    "ideas": "想法",
     "documents": "文档",
     "proposals": "提案",
     "tasks": "任务",
@@ -176,6 +177,8 @@
     "title": "超级管理员",
     "dashboard": "仪表盘",
     "welcome": "欢迎使用 Chorus 超级管理后台",
+    "email": "邮箱",
+    "emailPlaceholder": "you@company.com",
     "password": "密码",
     "passwordPlaceholder": "输入密码",
     "signingIn": "登录中...",
@@ -399,12 +402,12 @@
       "targetProjectPlaceholder": "选择一个项目...",
       "searchProjects": "搜索项目...",
       "previewLoading": "正在计算影响范围...",
-      "previewSummary": "将一并移动：{proposals} 个提案、{documents} 个文档、{tasks} 个任务、{activities} 条活动。",
+      "previewSummary": "将一并移动：{ideas} 个 idea（含派生）、{proposals} 个提案、{documents} 个文档、{tasks} 个任务、{activities} 条活动。",
       "previewWarning": "此操作不可撤销。",
       "confirm": "确认移动",
       "cancel": "取消",
       "error": "移动失败：{message}",
-      "successToast": "已移动 Idea — 更新 {proposals} 个提案、{documents} 个文档、{tasks} 个任务、{activities} 条活动。",
+      "successToast": "已移动 {ideas} 个 idea — 更新 {proposals} 个提案、{documents} 个文档、{tasks} 个任务、{activities} 条活动。",
       "viewMovedIdea": "查看"
     }
   },
@@ -752,6 +755,14 @@
       "loading": "加载 workspace...",
       "noCandidates": "未找到该邮箱对应的 workspace。",
       "errorLoading": "加载 workspace 失败，请重试。"
+    },
+    "rolePicker": {
+      "title": "该邮箱有多种登录方式，请选择如何继续。",
+      "superAdmin": "以超级管理员身份登录",
+      "regularUser": "使用密码登录",
+      "oidcCompany": "使用 {company} 登录",
+      "oidcCompanyFallback": "使用 SSO 登录",
+      "back": "换个邮箱"
     }
   },
   "projectOverview": {
@@ -1123,6 +1134,7 @@
     "overviewSubtitle": "追踪想法、提案和任务进展",
     "tabs": {
       "ideas": "想法",
+      "lineage": "血缘",
       "stats": "统计"
     },
     "badge": {
@@ -1141,6 +1153,28 @@
       "inProgress": "进行中",
       "humanConductRequired": "需要指挥",
       "done": "已完成"
+    },
+    "lineage": {
+      "derivedCount": "{count} 派生",
+      "title": "派生关系",
+      "derivedFrom": "派生自",
+      "setParent": "挂父",
+      "changeParent": "更改父级",
+      "derivedIdeas": "派生想法",
+      "derive": "派生",
+      "deriveIdea": "派生新想法",
+      "noParent": "无父级",
+      "setParentTitle": "设置父想法",
+      "setParentDescription": "为「{title}」选择一个父想法。只能选择同一项目内的想法；想法不能挂在自己或自己的后代之下（会形成环）。",
+      "searchPlaceholder": "搜索想法...",
+      "detach": "脱钩（变为顶层）",
+      "cycleBlocked": "后代 · 会成环",
+      "cycleWarning": "灰显的想法是当前想法的后代，选择它们会形成环，因此已被禁用。",
+      "noCandidates": "该项目内没有可选的想法",
+      "pickerTruncated": "仅显示前 200 个想法。如果没看到想要的父级，请用标题搜索缩小范围。",
+      "save": "设为父想法",
+      "saveFailed": "设置父级失败",
+      "deriveFailed": "派生想法失败"
     },
     "actions": {
       "newIdea": "新建想法",

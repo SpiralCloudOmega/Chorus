@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
-import { X, Loader2, User, Trash2, ArrowRightLeft, Pencil } from "lucide-react";
+import { toast } from "sonner";
+import { X, Loader2, User, Trash2, ArrowRightLeft, Pencil, GitFork, CornerLeftUp, CornerDownRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
@@ -32,6 +33,8 @@ import { ActivityCommentsView } from "./activity-comments-view";
 import { TaskDetailPanel } from "@/app/(dashboard)/projects/[uuid]/tasks/task-detail-panel";
 import { DocumentPanel } from "./document-panel";
 import { MoveIdeaDialog } from "./move-idea-dialog";
+import { SetParentDialog } from "./set-parent-dialog";
+import { NewIdeaDialog } from "../new-idea-dialog";
 import { deleteIdeaAction, updateIdeaAction } from "@/app/(dashboard)/projects/[uuid]/ideas/actions";
 import { getIdeaAction, getTaskAction, getProposalsForIdeaAction, getTasksForProposalAction } from "./actions";
 import { AssignIdeaModal } from "@/app/(dashboard)/projects/[uuid]/ideas/assign-idea-modal";
@@ -131,6 +134,11 @@ interface IdeaDetailPanelProps {
   projectUuid: string;
   currentUserUuid: string;
   onClose: () => void;
+  // Switch the open panel to another idea (lineage parent/child, post-derive).
+  // Wired to the parent's usePanelUrl.openPanel so the panel actually re-renders
+  // for the new idea — a bare router.push of ?panel= changes the URL but not the
+  // hook's selectedId state, so the panel would never switch.
+  onNavigate?: (ideaUuid: string) => void;
 }
 
 export function IdeaDetailPanel({
@@ -138,10 +146,12 @@ export function IdeaDetailPanel({
   projectUuid,
   currentUserUuid,
   onClose,
+  onNavigate,
 }: IdeaDetailPanelProps) {
   const t = useTranslations();
   const tTracker = useTranslations("ideaTracker");
   const tStatus = useTranslations("status");
+  const tLineage = useTranslations("ideaTracker.lineage");
   const router = useRouter();
 
   // Core idea state
@@ -174,6 +184,8 @@ export function IdeaDetailPanel({
 
   // Move dialog state
   const [showMoveDialog, setShowMoveDialog] = useState(false);
+  const [showSetParentDialog, setShowSetParentDialog] = useState(false);
+  const [showDeriveDialog, setShowDeriveDialog] = useState(false);
 
   // Child panel state — only one secondary panel at a time
   const [selectedTaskUuid, setSelectedTaskUuid] = useState<string | null>(null);
@@ -417,6 +429,16 @@ export function IdeaDetailPanel({
     setIsEditing(true);
   };
 
+  // After the derive dialog creates the child, switch the panel to it.
+  // router.refresh() repaints the underlying tree/list with the new edge;
+  // onNavigate (the parent's openPanel) is what actually swaps the open panel —
+  // a bare router.push of ?panel= changes the URL but not the hook's state.
+  const handleDerived = (childUuid: string) => {
+    toast.success(tLineage("deriveIdea"));
+    router.refresh();
+    onNavigate?.(childUuid);
+  };
+
   const handleCancelEdit = () => {
     setIsEditing(false);
     setEditTitle(idea?.title || "");
@@ -520,6 +542,19 @@ export function IdeaDetailPanel({
           </div>
 
           <div className="flex items-center gap-2 ml-4">
+            {idea && !isEditing && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 border-[#E5E0D8] px-2.5"
+                onClick={() => setShowDeriveDialog(true)}
+                title={tLineage("deriveIdea")}
+                aria-label={tLineage("deriveIdea")}
+              >
+                <GitFork className="h-3.5 w-3.5 text-[#C67A52]" />
+                <span className="text-[12px] font-medium text-[#C67A52]">{tLineage("derive")}</span>
+              </Button>
+            )}
             {idea && !isEditing && (
               <Button
                 variant="outline"
@@ -646,6 +681,71 @@ export function IdeaDetailPanel({
                         tasks={tasks}
                         onSelectTask={openTask}
                       />
+
+                      {/* Lineage section — parent breadcrumb + set-parent + derived children */}
+                      <div className="mt-5 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5">
+                            <GitFork className="h-3.5 w-3.5 text-[#C67A52]" />
+                            <span className="text-[12px] font-semibold text-[#5F5E5A]">{tLineage("title")}</span>
+                          </div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 gap-1 border-[#E5E0D8] px-2 text-[11px] text-[#6B6B6B]"
+                            onClick={() => setShowSetParentDialog(true)}
+                          >
+                            <Pencil className="h-3 w-3" />
+                            {idea.parentUuid ? tLineage("changeParent") : tLineage("setParent")}
+                          </Button>
+                        </div>
+
+                        {/* Parent breadcrumb */}
+                        {idea.parent ? (
+                          <button
+                            type="button"
+                            onClick={() => onNavigate?.(idea.parent!.uuid)}
+                            className="flex w-full items-center gap-2 rounded-lg bg-[#FAF8F4] px-3 py-2.5 text-left transition-colors hover:bg-[#F5F2EC]"
+                          >
+                            <CornerLeftUp className="h-3.5 w-3.5 shrink-0 text-[#888780]" />
+                            <span className="shrink-0 text-[12px] text-[#888780]">{tLineage("derivedFrom")}</span>
+                            <span className="truncate text-[12px] font-medium text-[#5F5E5A]">{idea.parent.title}</span>
+                          </button>
+                        ) : (
+                          <p className="px-1 text-[12px] text-[#A8A498]">{tLineage("noParent")}</p>
+                        )}
+
+                        {/* Derived children list */}
+                        {idea.children && idea.children.length > 0 && (
+                          <>
+                            <div className="flex items-center gap-1.5 px-1 pt-1">
+                              <span className="text-[12px] font-medium text-[#5F5E5A]">{tLineage("derivedIdeas")}</span>
+                              <span className="text-[11px] text-[#888780]">{idea.children.length}</span>
+                            </div>
+                            <div className="overflow-hidden rounded-lg border border-[#EFEBE3]">
+                              {idea.children.map((child, idx) => (
+                                <div key={child.uuid}>
+                                  {idx > 0 && <div className="h-px bg-[#F0EEEA]" />}
+                                  <button
+                                    type="button"
+                                    onClick={() => onNavigate?.(child.uuid)}
+                                    className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left transition-colors hover:bg-[#FAF8F4]"
+                                  >
+                                    <span className="flex min-w-0 items-center gap-2">
+                                      <CornerDownRight className="h-3.5 w-3.5 shrink-0 text-[#C2BDB2]" />
+                                      <span className="truncate text-[12px] text-[#2C2C2A]">{child.title}</span>
+                                    </span>
+                                    <Badge className={`shrink-0 border-0 text-[10px] ${derivedStatusColors[child.derivedStatus] || derivedStatusColors.todo}`}>
+                                      {tStatus(derivedStatusI18nKeys[child.derivedStatus] || "todo")}
+                                    </Badge>
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      </div>
+
                       <ReportsList
                         projectUuid={projectUuid}
                         ideaUuid={idea.uuid}
@@ -804,6 +904,32 @@ export function IdeaDetailPanel({
         projectUuid={projectUuid}
         onMoved={() => onClose()}
       />
+
+      {/* Set Parent (lineage) Dialog */}
+      {idea && (
+        <SetParentDialog
+          open={showSetParentDialog}
+          onOpenChange={setShowSetParentDialog}
+          ideaUuid={idea.uuid}
+          ideaTitle={idea.title}
+          projectUuid={projectUuid}
+          currentParentUuid={idea.parentUuid ?? null}
+          descendantUuids={idea.descendantUuids ?? []}
+          onChanged={fetchIdea}
+        />
+      )}
+
+      {/* Derive child idea — reuses the create-idea dialog, scoped to this parent */}
+      {idea && (
+        <NewIdeaDialog
+          open={showDeriveDialog}
+          onOpenChange={setShowDeriveDialog}
+          projectUuid={projectUuid}
+          parentUuid={idea.uuid}
+          parentTitle={idea.title}
+          onCreated={handleDerived}
+        />
+      )}
 
       {/* Assign Idea Modal */}
       {showAssignModal && idea && (

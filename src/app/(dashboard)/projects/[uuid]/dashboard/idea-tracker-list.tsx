@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
 import { IdeaStatusGroup } from "./idea-status-group";
+import { IdeaLineageTree } from "./idea-lineage-tree";
 import type { IdeaCardItem } from "./idea-card";
 
 interface TrackerApiResponse {
@@ -21,8 +22,16 @@ interface TrackerApiResponse {
 interface IdeaTrackerListProps {
   projectUuid: string;
   initialData?: { groups: Record<string, IdeaCardItem[]>; counts: Record<string, number> };
+  // View mode is owned by the parent (IdeaTracker): "flat" = status groups,
+  // "tree" = lineage forest. This component no longer toggles it.
+  viewMode: "flat" | "tree";
   onIdeaClick?: (uuid: string) => void;
   onNewIdea?: () => void;
+  // Reports the *live* emptiness of the list (after realtime refetches) up to
+  // the parent, which owns whether the header "New Idea" button shows. The
+  // parent's SSR snapshot can't see ideas created during the session, so this
+  // bottom-up signal keeps the button in sync. Fires for both flat and tree
+  // views — emptiness is computed before the viewMode branch below.
   onEmptyChange?: (isEmpty: boolean) => void;
 }
 
@@ -32,6 +41,7 @@ const STATUS_ORDER = ["human_conduct_required", "in_progress", "todo", "done"] a
 export function IdeaTrackerList({
   projectUuid,
   initialData,
+  viewMode,
   onIdeaClick,
   onNewIdea,
   onEmptyChange,
@@ -75,11 +85,16 @@ export function IdeaTrackerList({
     0
   );
 
+  // Report emptiness up to the parent once data has settled, so the header
+  // "New Idea" button tracks the live list (e.g. after creating the first idea
+  // from the empty-state CTA). Skipped while still loading to avoid a spurious
+  // "empty" flash before the first fetch resolves.
   useEffect(() => {
-    if (!isLoading) {
-      onEmptyChange?.(totalIdeas === 0);
-    }
+    if (!isLoading) onEmptyChange?.(totalIdeas === 0);
   }, [totalIdeas, isLoading, onEmptyChange]);
+
+  // Flatten all status groups into a single list for the lineage tree view.
+  const allIdeas: IdeaCardItem[] = STATUS_ORDER.flatMap((s) => groups[s] || []);
 
   // Loading skeleton
   if (isLoading) {
@@ -154,22 +169,27 @@ export function IdeaTrackerList({
         </div>
       )}
 
-      {/* Status groups — only show groups with ideas */}
-      <div className="space-y-4">
-        {STATUS_ORDER.map((status) => {
-          const ideas = groups[status] || [];
-          if (ideas.length === 0) return null;
-          return (
-            <IdeaStatusGroup
-              key={status}
-              status={status}
-              ideas={ideas}
-              defaultOpen={status !== "done"}
-              onIdeaClick={onIdeaClick}
-            />
-          );
-        })}
-      </div>
+      {viewMode === "tree" ? (
+        /* Lineage tree — single indented forest built from parentUuid */
+        <IdeaLineageTree ideas={allIdeas} onIdeaClick={onIdeaClick} />
+      ) : (
+        /* Status groups — only show groups with ideas */
+        <div className="space-y-4">
+          {STATUS_ORDER.map((status) => {
+            const ideas = groups[status] || [];
+            if (ideas.length === 0) return null;
+            return (
+              <IdeaStatusGroup
+                key={status}
+                status={status}
+                ideas={ideas}
+                defaultOpen={status !== "done"}
+                onIdeaClick={onIdeaClick}
+              />
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

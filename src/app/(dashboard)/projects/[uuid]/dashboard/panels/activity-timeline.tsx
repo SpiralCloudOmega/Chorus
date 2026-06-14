@@ -27,6 +27,12 @@ function formatActivityMessage(activity: ActivityResponse, t: TranslateFn): stri
     case "status_changed":
     case "idea_status_changed":
       return t("activity.ideaStatusChanged", { actor: actorName });
+    case "edited":
+    case "idea_edited":
+      return t("activity.ideaEdited", { actor: actorName });
+    case "reparented":
+    case "idea_reparented":
+      return t("activity.ideaReparented", { actor: actorName });
     case "elaboration_started":
       return t("activity.elaborationStarted", { actor: actorName });
     case "elaboration_answered":
