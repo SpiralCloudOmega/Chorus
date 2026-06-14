@@ -36,6 +36,8 @@ The labels under each stage are the **permissions** an actor needs at that stage
 
 ## What's New
 
+**[v0.10.0](https://chorus-ai.dev/blog/chorus-v0.10.0-release/)** — Single-parent idea lineage: an idea may derive a child or be attached under another, forming a forest. The relation is intentionally weak — a parent surfaces a read-only "+N derived" rollup and does not constrain any child's elaboration, proposal, or task flow. Idea browsing consolidates onto the Dashboard (a three-way Ideas / Lineage / Stats view switch with an adaptive default); the standalone Idea List page is retired and its URLs 308-redirect to the Dashboard.
+
 **[v0.9.4](https://chorus-ai.dev/blog/chorus-v0.9.4-release/)** — OpenClaw plugin rewritten on the OpenClaw 2026.4.27 Plugin SDK (native MCP registration, `runEmbeddedAgent` for SSE wake, reviewers as native skills); Codex plugin hooks now ship inside the package, with an installer that cleans up legacy hook copies in the user directory.
 
 **[v0.9.0](https://chorus-ai.dev/blog/chorus-v0.9.0-release/)** — Brainstorm skill for fuzzy ideas (open-ended chat before structured Q&A) and idea-completion reports (every shipped idea gets a Summary / Decisions / Follow-ups writeup, surfaced on the idea overview).
