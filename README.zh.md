@@ -27,6 +27,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近更新
 
+**[v0.10.0](https://chorus-ai.dev/zh/blog/chorus-v0.10.0-release/)** — 单父想法血缘：一条想法可派生子想法或挂靠至另一条之下，构成森林结构。该关联为弱关联，父想法仅呈现只读的 "+N derived" 汇总，不约束子想法的细化、提案与任务流程。想法浏览统一收敛至 Dashboard（Ideas / Lineage / Stats 三档视图切换，支持自适应默认）；独立的 Idea List 页面下线，原 URL 经 308 重定向至 Dashboard。
+
 **[v0.9.4](https://chorus-ai.dev/zh/blog/chorus-v0.9.4-release/)** — OpenClaw 插件基于 OpenClaw 2026.4.27 Plugin SDK 全面重写（原生 MCP 注册、`runEmbeddedAgent` 处理 SSE 唤醒、reviewer 改为原生 skill）；Codex 插件 hook 改为随插件包分发，安装器同时清理用户目录中的历史 hook 拷贝。
 
 **[v0.9.0](https://chorus-ai.dev/zh/blog/chorus-v0.9.0-release/)** — 头脑风暴 skill 帮你把模糊的想法聊出形状（在结构化多选题前先开放式对话），想法落地后自动生成总结报告（Summary / Decisions / Follow-ups 三段式，挂在想法概览页）。
