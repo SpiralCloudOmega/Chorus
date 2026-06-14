@@ -1134,6 +1134,7 @@
     "overviewSubtitle": "Track ideas, proposals, and tasks at a glance",
     "tabs": {
       "ideas": "Ideas",
+      "lineage": "Lineage",
       "stats": "Stats"
     },
     "badge": {
@@ -1154,8 +1155,6 @@
       "done": "Done"
     },
     "lineage": {
-      "viewFlat": "Flat",
-      "viewTree": "By lineage",
       "derivedCount": "{count} derived",
       "title": "Lineage",
       "derivedFrom": "Derived from",

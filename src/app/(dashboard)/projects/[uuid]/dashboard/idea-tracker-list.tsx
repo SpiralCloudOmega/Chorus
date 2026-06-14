@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { useTranslations } from "next-intl";
-import { AlertCircle, GitFork, Lightbulb, List, Plus } from "lucide-react";
+import { AlertCircle, Lightbulb, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
@@ -22,8 +22,16 @@ interface TrackerApiResponse {
 interface IdeaTrackerListProps {
   projectUuid: string;
   initialData?: { groups: Record<string, IdeaCardItem[]>; counts: Record<string, number> };
+  // View mode is owned by the parent (IdeaTracker): "flat" = status groups,
+  // "tree" = lineage forest. This component no longer toggles it.
+  viewMode: "flat" | "tree";
   onIdeaClick?: (uuid: string) => void;
   onNewIdea?: () => void;
+  // Reports the *live* emptiness of the list (after realtime refetches) up to
+  // the parent, which owns whether the header "New Idea" button shows. The
+  // parent's SSR snapshot can't see ideas created during the session, so this
+  // bottom-up signal keeps the button in sync. Fires for both flat and tree
+  // views — emptiness is computed before the viewMode branch below.
   onEmptyChange?: (isEmpty: boolean) => void;
 }
 
@@ -33,6 +41,7 @@ const STATUS_ORDER = ["human_conduct_required", "in_progress", "todo", "done"] a
 export function IdeaTrackerList({
   projectUuid,
   initialData,
+  viewMode,
   onIdeaClick,
   onNewIdea,
   onEmptyChange,
@@ -42,9 +51,6 @@ export function IdeaTrackerList({
   const [groups, setGroups] = useState<Record<string, IdeaCardItem[]>>(initialData?.groups ?? {});
   const [isLoading, setIsLoading] = useState(!initialData);
   const [error, setError] = useState<string | null>(null);
-  // View mode: "flat" (default, status-grouped) or "tree" (lineage-indented).
-  // Default flat — the lineage is opt-in, never force-imposed on the list.
-  const [viewMode, setViewMode] = useState<"flat" | "tree">("flat");
 
   const fetchData = useCallback(async () => {
     try {
@@ -79,14 +85,16 @@ export function IdeaTrackerList({
     0
   );
 
+  // Report emptiness up to the parent once data has settled, so the header
+  // "New Idea" button tracks the live list (e.g. after creating the first idea
+  // from the empty-state CTA). Skipped while still loading to avoid a spurious
+  // "empty" flash before the first fetch resolves.
+  useEffect(() => {
+    if (!isLoading) onEmptyChange?.(totalIdeas === 0);
+  }, [totalIdeas, isLoading, onEmptyChange]);
+
   // Flatten all status groups into a single list for the lineage tree view.
   const allIdeas: IdeaCardItem[] = STATUS_ORDER.flatMap((s) => groups[s] || []);
-
-  useEffect(() => {
-    if (!isLoading) {
-      onEmptyChange?.(totalIdeas === 0);
-    }
-  }, [totalIdeas, isLoading, onEmptyChange]);
 
   // Loading skeleton
   if (isLoading) {
@@ -160,39 +168,6 @@ export function IdeaTrackerList({
           {error}
         </div>
       )}
-
-      {/* Flat / Tree view toggle — segmented control. Flat is the default; the
-          lineage tree groups by derivation when the user opts in. */}
-      <div className="flex justify-end">
-        <div className="inline-flex items-center gap-0.5 rounded-lg bg-[#EFEBE3] p-0.5">
-          <button
-            type="button"
-            onClick={() => setViewMode("flat")}
-            aria-pressed={viewMode === "flat"}
-            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] transition-colors ${
-              viewMode === "flat"
-                ? "bg-white font-medium text-[#2C2C2A] shadow-sm"
-                : "text-[#888780] hover:text-[#2C2C2A]"
-            }`}
-          >
-            <List className="h-3.5 w-3.5" />
-            {t("lineage.viewFlat")}
-          </button>
-          <button
-            type="button"
-            onClick={() => setViewMode("tree")}
-            aria-pressed={viewMode === "tree"}
-            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] transition-colors ${
-              viewMode === "tree"
-                ? "bg-white font-medium text-[#2C2C2A] shadow-sm"
-                : "text-[#888780] hover:text-[#2C2C2A]"
-            }`}
-          >
-            <GitFork className="h-3.5 w-3.5" />
-            {t("lineage.viewTree")}
-          </button>
-        </div>
-      </div>
 
       {viewMode === "tree" ? (
         /* Lineage tree — single indented forest built from parentUuid */

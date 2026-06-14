@@ -1135,6 +1135,7 @@
     "overviewSubtitle": "追踪想法、提案和任务进展",
     "tabs": {
       "ideas": "想法",
+      "lineage": "血缘",
       "stats": "统计"
     },
     "badge": {
@@ -1155,8 +1156,6 @@
       "done": "已完成"
     },
     "lineage": {
-      "viewFlat": "扁平",
-      "viewTree": "按血缘",
       "derivedCount": "{count} 派生",
       "title": "派生关系",
       "derivedFrom": "派生自",
