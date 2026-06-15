@@ -1,37 +1,43 @@
 // cli/lineage.mjs
 // Resolves any inbound Chorus notification to its ROOT idea, so the daemon can
-// key one Claude session per root idea (the idea_root anchor). Verified field
-// chains against the repo:
-//   • get_task → { proposalUuid: string | null }            (task.service.ts)
-//   • get_proposal → { inputType, inputUuids: string[] }     (proposal.service.ts)
-//       an idea-derived proposal has inputType "idea" and inputUuids[0] = idea
-//   • get_idea → { parentUuid: string | null }               (idea.service.ts)
-//       walk parentUuid to the top of the single-parent lineage forest
+// key one Claude session per root idea (the idea_root anchor).
 //
-// All Chorus reads go through the injected ChorusMcpClient.callTool (contract:
-// never hand-roll fetch). Returns null when there is no idea ancestor (e.g. a
-// quick task with no proposal/idea) so the caller can fall back to a per-entity
-// session key.
+// Resolution is fully SERVER-SIDE: every notification is resolved by a single
+// call to the standalone REST endpoint
+//   GET /api/entities/{type}/{uuid}/root-idea   (Bearer <cho_ agent key>)
+// which is the single source of truth for entity → root-idea attribution
+// (it closes the document-attribution gap and defines multi-idea semantics).
+// There is intentionally NO client-side lineage walk — the whole point of this
+// change is to stop the daemon re-implementing the Chorus data model.
+//
+// Uses global fetch (Node 18+), exactly like sse-listener.mjs, so it adds no
+// dependency and reuses the same Bearer auth path. On any failure (unreachable
+// server, non-2xx, malformed body) it returns null so the caller falls back to
+// a per-entity session key — "no root idea" is a normal, non-fatal outcome.
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
-const MAX_PARENT_HOPS = 50; // cycle/runaway guard
 
 export class LineageResolver {
   /**
    * @param {{
-   *   mcpClient: { callTool: (name: string, args?: Record<string, unknown>) => Promise<any> },
+   *   url: string,        Chorus base URL.
+   *   apiKey: string,     `cho_` agent API key.
    *   logger?: { info(m:string):void, warn(m:string):void, error(m:string):void },
+   *   fetchImpl?: typeof fetch,  Injectable for tests.
    * }} opts
    */
   constructor(opts) {
-    this.mcp = opts.mcpClient;
+    this.url = opts.url.replace(/\/$/, "");
+    this.apiKey = opts.apiKey;
     this.logger = opts.logger ?? NOOP_LOGGER;
+    this.fetchImpl = opts.fetchImpl ?? globalThis.fetch;
     /** @type {Map<string, string|null>} per-run cache keyed by `${type}:${uuid}`. */
     this.cache = new Map();
   }
 
   /**
-   * Resolve an event to its root idea uuid, or null if none.
+   * Resolve an event to its root idea uuid, or null if none. One REST call per
+   * notification; the per-run cache single-flights repeats of the same entity.
    * @param {{ entityType?: string, entityUuid?: string }} event
    * @returns {Promise<string|null>}
    */
@@ -45,72 +51,61 @@ export class LineageResolver {
     const cacheKey = `${entityType}:${entityUuid}`;
     if (this.cache.has(cacheKey)) return this.cache.get(cacheKey);
 
-    let root = null;
-    try {
-      const startIdeaUuid = await this.#toIdeaUuid(entityType, entityUuid);
-      root = startIdeaUuid ? await this.#walkToRoot(startIdeaUuid) : null;
-    } catch (err) {
-      this.logger.warn(`[Chorus] lineage resolution failed for ${cacheKey}: ${err}`);
-      root = null;
-    }
+    const root = await this.#resolveViaServer(entityType, entityUuid);
     this.cache.set(cacheKey, root);
     return root;
   }
 
   /**
-   * Map an entity to the idea uuid it belongs to (not yet walked to root).
+   * Call GET /api/entities/{type}/{uuid}/root-idea and return the rootIdeaUuid
+   * (string | null). Returns null on any error so the caller degrades to a
+   * per-entity session key — never throws.
    * @param {string} entityType @param {string} entityUuid
    * @returns {Promise<string|null>}
    */
-  async #toIdeaUuid(entityType, entityUuid) {
-    switch (entityType) {
-      case "idea":
-        return entityUuid;
-      case "proposal":
-        return this.#ideaFromProposal(entityUuid);
-      case "task": {
-        const task = await this.mcp.callTool("chorus_get_task", { taskUuid: entityUuid });
-        const proposalUuid = task?.proposalUuid;
-        if (!proposalUuid) return null; // quick task, no proposal/idea ancestor
-        return this.#ideaFromProposal(proposalUuid);
-      }
-      case "document": {
-        // Documents materialize from a proposal; reuse the proposal path if the
-        // event carries one, else no idea ancestor.
-        return null;
-      }
-      default:
-        return null;
+  async #resolveViaServer(entityType, entityUuid) {
+    const endpoint =
+      `${this.url}/api/entities/${encodeURIComponent(entityType)}/` +
+      `${encodeURIComponent(entityUuid)}/root-idea`;
+    let response;
+    try {
+      response = await this.fetchImpl(endpoint, {
+        headers: { Authorization: `Bearer ${this.apiKey}`, Accept: "application/json" },
+      });
+    } catch (err) {
+      this.logger.warn(`[Chorus] lineage: request failed for ${entityType}:${entityUuid}: ${err}`);
+      return null;
     }
-  }
-
-  /** @param {string} proposalUuid @returns {Promise<string|null>} */
-  async #ideaFromProposal(proposalUuid) {
-    const proposal = await this.mcp.callTool("chorus_get_proposal", { proposalUuid });
-    if (proposal?.inputType !== "idea") return null;
-    const inputUuids = Array.isArray(proposal.inputUuids) ? proposal.inputUuids : [];
-    return inputUuids.length > 0 ? inputUuids[0] : null;
-  }
-
-  /**
-   * Walk parentUuid to the top of the lineage forest.
-   * @param {string} ideaUuid @returns {Promise<string>}
-   */
-  async #walkToRoot(ideaUuid) {
-    let current = ideaUuid;
-    const visited = new Set([current]);
-    for (let hop = 0; hop < MAX_PARENT_HOPS; hop++) {
-      const idea = await this.mcp.callTool("chorus_get_idea", { ideaUuid: current });
-      const parent = idea?.parentUuid;
-      if (!parent) return current; // reached a root
-      if (visited.has(parent)) {
-        this.logger.warn(`[Chorus] lineage: parent cycle detected at ${parent}, stopping`);
-        return current;
-      }
-      visited.add(parent);
-      current = parent;
+    if (!response.ok) {
+      this.logger.warn(
+        `[Chorus] lineage: server returned ${response.status} for ${entityType}:${entityUuid}`
+      );
+      return null;
     }
-    this.logger.warn(`[Chorus] lineage: exceeded ${MAX_PARENT_HOPS} parent hops, stopping at ${current}`);
-    return current;
+    let body;
+    try {
+      body = await response.json();
+    } catch (err) {
+      this.logger.warn(`[Chorus] lineage: bad JSON for ${entityType}:${entityUuid}: ${err}`);
+      return null;
+    }
+    // API envelope: { success: true, data: { rootIdeaUuid, lineage, resolvedVia, ... } }.
+    const data = body && typeof body === "object" ? body.data : undefined;
+    if (!data || typeof data !== "object" || !("rootIdeaUuid" in data)) {
+      this.logger.warn(
+        `[Chorus] lineage: unexpected response shape for ${entityType}:${entityUuid}`
+      );
+      return null;
+    }
+    const root = data.rootIdeaUuid;
+    if (root !== null && typeof root !== "string") {
+      this.logger.warn(`[Chorus] lineage: non-string rootIdeaUuid for ${entityType}:${entityUuid}`);
+      return null;
+    }
+    this.logger.info(
+      `[Chorus] lineage: ${entityType}:${entityUuid} → ${root ?? "none"}` +
+        (typeof data.resolvedVia === "string" ? ` (${data.resolvedVia})` : "")
+    );
+    return root;
   }
 }

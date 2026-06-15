@@ -33,17 +33,46 @@ On receiving a relevant notification (at minimum `task_assigned`), the daemon SH
 
 ### Requirement: Lineage-anchored session continuity
 
-The daemon SHALL key each local Claude session on the **root idea** of the dispatched entity. It SHALL resolve any inbound event up the Chorus lineage (`task → proposal → idea`, then following `idea.parentUuid`) to its topmost idea, and SHALL maintain a persisted map from root idea to Claude session id. When a notification resolves to a root idea that already has a session, the daemon SHALL resume that session (`--resume`); when it resolves to a new root idea, the daemon SHALL start a fresh session and persist the newly created session id. When no idea ancestor exists, the daemon SHALL fall back to a per-entity session key.
+The daemon SHALL key each local Claude session on the **root idea** of the dispatched
+entity. For each inbound notification it SHALL resolve the entity to its root idea by
+making a single call to the server-side REST endpoint
+`GET /api/entities/{type}/{uuid}/root-idea` (authenticated with its agent API key) —
+the single source of truth. The daemon SHALL NOT perform any client-side lineage walk
+of its own; the server's `rootIdeaUuid` (including `null`) is authoritative. The daemon
+SHALL maintain a persisted map from root idea to Claude session id. When a notification
+resolves to a root idea that already has a session, the daemon SHALL resume that session
+(`--resume`); when it resolves to a new root idea, the daemon SHALL start a fresh session
+and persist the newly created session id. When the endpoint returns no idea ancestor (a
+`null` root idea) or the call fails for any reason, the daemon SHALL fall back to a
+per-entity session key. Resolution results MAY be cached per run so the same entity is
+not resolved twice within one daemon run.
 
 #### Scenario: Same root idea resumes the same session
 
-- **WHEN** two notifications (e.g. a task execution then a later proposal rejection) both resolve up the lineage to the same root idea
-- **THEN** the second wake resumes the same Claude session id used by the first via `--resume`
+- **WHEN** two notifications (e.g. a task execution then a later proposal rejection)
+  both resolve to the same root idea
+- **THEN** the second wake resumes the same Claude session id used by the first via
+  `--resume`
 
 #### Scenario: Different root idea starts a fresh session
 
 - **WHEN** a notification resolves to a root idea that has no recorded session
-- **THEN** the daemon starts a fresh Claude session, captures the new session id from the subprocess output, and persists it under that root idea
+- **THEN** the daemon starts a fresh Claude session, captures the new session id from
+  the subprocess output, and persists it under that root idea
+
+#### Scenario: Each notification is resolved via the REST endpoint
+
+- **WHEN** a notification arrives for an entity
+- **THEN** the daemon calls `GET /api/entities/{type}/{uuid}/root-idea` once and uses
+  the returned `rootIdeaUuid` (including a `null` result) without performing any local
+  lineage walk
+
+#### Scenario: A failed or unreachable resolution degrades to a per-entity key
+
+- **WHEN** the resolution endpoint is unreachable, returns a non-2xx status, or returns
+  a malformed body
+- **THEN** the daemon treats the entity as having no root idea and anchors the session
+  on a per-entity key, without crashing
 
 ### Requirement: Per-root-idea wake serialization
 

@@ -273,6 +273,8 @@ Each idea entry carries the stored single-parent lineage edge as `parentUuid` (o
 
 **Output**: Idea details JSON, with `reports: DocumentResponse[]` (full Markdown content, sorted by `createdAt` desc; empty when none), `parent`, `children[]`, and `descendantUuids[]` lineage fields.
 
+> Entity → root-idea lineage resolution is **not** an MCP tool. It is a standalone REST endpoint, `GET /api/entities/{type}/{uuid}/root-idea`, callable with any valid auth (including an agent API key) — see `docs/API.md` / the route at `src/app/api/entities/[type]/[uuid]/root-idea/`.
+
 ### chorus_get_documents
 
 **Description**: Get the list of documents for a project
