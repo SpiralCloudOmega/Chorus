@@ -21,6 +21,9 @@ import {
 import { authFetch, logout as authLogout, clearUserManager } from "@/lib/auth-client";
 import { PixelCanvasWidget } from "@/components/pixel-canvas-widget";
 import { RealtimeProvider } from "@/contexts/realtime-context";
+import { AgentPresenceProvider } from "@/contexts/agent-presence-context";
+import { AgentPresencePill } from "@/components/agent-presence-pill";
+import { AgentConnectionsModal } from "@/components/agent-presence";
 import { NotificationProvider } from "@/contexts/notification-context";
 import { NotificationBell } from "@/components/notification-bell";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
@@ -243,7 +246,11 @@ export default function DashboardLayout({
     { href: `/projects/${projectUuid}/activity`, label: t("nav.activity"), icon: Activity },
   ];
 
-  // Global navigation items
+  // Global navigation items.
+  // Note: the former /agent-connections page + its RadioTower nav item were
+  // removed — that view now lives in the "View all" modal opened from the
+  // sidebar presence pill (the former path is redirected to the dashboard in
+  // middleware). See AgentConnectionsModal mounted in the shell below.
   const globalNavItems = [
     { href: "/projects", label: t("nav.projects"), icon: FolderKanban },
     { href: "/settings", label: t("nav.settings"), icon: Settings },
@@ -432,9 +439,18 @@ export default function DashboardLayout({
         </nav>
       </div>
 
-      {/* User Profile */}
-      <div className="p-6">
-        <div className="flex items-center gap-2">
+      {/* Bottom-pinned rail footer: the agent-presence pill sits directly above
+          the user-profile block. Grouped into ONE flex child so the rail's
+          justify-between pins the whole footer to the bottom-left (with two
+          children — nav + footer — the pill no longer floats mid-rail). */}
+      <div className="mt-auto flex flex-col gap-1 px-4 pb-4">
+        {/* Agent Presence pill — resident rail affordance (online-agent count +
+            click popover). Reads from the shell-level AgentPresenceProvider. */}
+        <AgentPresencePill mobile={mobile} />
+
+        {/* User Profile */}
+        <div className="px-2 pt-1">
+          <div className="flex items-center gap-2">
           <div className={`flex items-center justify-center rounded-full bg-primary font-medium text-primary-foreground ${mobile ? "h-10 w-10 text-base" : "h-9 w-9 text-sm"}`}>
             {user?.name?.charAt(0) || "U"}
           </div>
@@ -455,6 +471,7 @@ export default function DashboardLayout({
           >
             <LogOut className="h-4 w-4" />
           </Button>
+          </div>
         </div>
       </div>
     </>
@@ -463,6 +480,16 @@ export default function DashboardLayout({
 
   return (
     <NotificationProvider>
+    {/* AgentPresenceProvider is the single shell-level data spine for the
+        sidebar presence pill + popover + modal. Mounted ONCE here, wrapping the
+        whole shell (sidebar + main), so it survives route changes (does not
+        remount per navigation) and is independent of the per-route, project-
+        scoped RealtimeProvider branches below. */}
+    <AgentPresenceProvider>
+    {/* "View all" modal — mounted once in the shell, open-state bound to the
+        provider's modalOpen/setModalOpen. The sidebar popover's "View all"
+        button opens it via setModalOpen(true); there is no standalone route. */}
+    <AgentConnectionsModal />
     <div className="flex min-h-screen bg-background">
       {/* Mobile Header - visible below md */}
       <header className="fixed top-0 left-0 right-0 z-30 border-b border-border bg-card md:hidden">
@@ -518,6 +545,7 @@ export default function DashboardLayout({
         <main className="flex-1 flex flex-col overflow-auto pt-14 md:pt-0"><div className={`mx-auto w-full flex-1 flex flex-col ${isFullWidthPage ? "" : "max-w-[1200px]"}`}><PageTransition>{children}</PageTransition></div></main>
       )}
     </div>
+    </AgentPresenceProvider>
     <Toaster position={isMobile ? "top-center" : "top-right"} closeButton={!isMobile} />
     </NotificationProvider>
   );
