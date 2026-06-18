@@ -22,8 +22,6 @@
   },
   "files": [
     "chorus.mjs",
-    "cli/**/*.mjs",
-    "!cli/**/__tests__/**",
     ".next/standalone/",
     "prisma/schema.prisma",
     "prisma/migrations/",
