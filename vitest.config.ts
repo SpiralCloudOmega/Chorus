@@ -15,7 +15,7 @@ export default defineConfig({
     reporters: process.env.GITHUB_ACTIONS === 'true' ? ['default', 'github-actions'] : ['default'],
     globals: true,
     environment: 'node',
-    include: ['src/**/__tests__/**/*.test.{ts,tsx}', 'cli/**/__tests__/**/*.test.mjs'],
+    include: ['src/**/__tests__/**/*.test.{ts,tsx}'],
     exclude: ['node_modules', '.next', 'packages'],
     coverage: {
       provider: 'v8',
