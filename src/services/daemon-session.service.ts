@@ -81,6 +81,16 @@ export type TranscriptRole = (typeof TRANSCRIPT_ROLES)[number];
 // constant so the bound is single-sourced and adjustable without touching call sites.
 export const MAX_TRANSCRIPT_MESSAGES_PER_SESSION = 200;
 
+// Conversation-naming helpers live in the dependency-light `daemon-session-naming`
+// leaf module (so the execution service can reuse them without dragging in the
+// notification/mention import graph). Re-exported here for callers that already import
+// from this service.
+export {
+  CONVERSATION_NAME_MAX,
+  conversationNameFromInstruction,
+  getFirstInstructionBySessionUuid,
+} from "@/services/daemon-session-naming";
+
 // ===== Types =====
 
 /**
@@ -138,6 +148,13 @@ export interface TranscriptEvent {
   // task) on the same channel.
   trigger: "turn_created" | "turn_status_changed" | "transcript_appended";
   turn: TurnView;
+  // The appended message tail. Carried ONLY on the `transcript_appended` trigger so a
+  // viewer patches the affected turn's message list live without a follow-up read
+  // (the round-trip the Tech Design's Risks section calls out). It REUSES the existing
+  // `TranscriptMessageView` shape (`toTranscriptMessageView`) — no second message type.
+  // For `turn_created` / `turn_status_changed` (no messages changed) it is an empty
+  // array, so the field is always present and a consumer never branches on undefined.
+  messages: TranscriptMessageView[];
 }
 
 // Subset of the DaemonSession row the mapper reads. Kept structural (not the Prisma
@@ -420,6 +437,9 @@ export async function createPendingTurn(params: {
     sessionUuid: params.sessionUuid,
     trigger: "turn_created",
     turn: view,
+    // No messages changed on a turn-create — keep the field present (always-array
+    // contract) so consumers never branch on undefined.
+    messages: [],
   });
   return view;
 }
@@ -516,6 +536,8 @@ export async function advanceTurn(
     sessionUuid: turn.sessionUuid,
     trigger: "turn_status_changed",
     turn: view,
+    // No messages changed on a status transition — empty tail (always-array contract).
+    messages: [],
   });
   return { ok: true, turn: view };
 }
@@ -577,6 +599,160 @@ export async function getSessionTurns(
     orderBy: { seq: "asc" },
   });
   return turns.map(toTurnView);
+}
+
+/**
+ * Lightweight visibility fence for the SSE transcript subscription: is `sessionUuid`
+ * visible to this caller under the SAME owner/self + companyUuid scope as
+ * `getSessionTurns` / `getSessionDetail`? Returns `true` only when the session exists,
+ * is in the caller's company, AND belongs to an agent the caller may see (its own, for
+ * an agent key; an owned agent's, for a user / super_admin). Returns `false` for a
+ * non-existent / cross-company / non-owned session — the SAME negative verdict in every
+ * case, so the SSE route can silently decline to subscribe without ever confirming a
+ * session exists (non-disclosure, exactly like `getSessionTurns` returning `null`).
+ *
+ * Selects only `uuid` — it is a cheap existence-under-scope check, NOT a transcript load
+ * (the route gates on visibility before subscribing; it never reads turns/messages just
+ * to decide whether to forward live events). A READ that does NOT swallow — a query
+ * failure propagates so the route surfaces a 500 before opening the stream.
+ */
+export async function isSessionVisibleToCaller(
+  auth: { type: string; companyUuid: string; actorUuid: string },
+  sessionUuid: string,
+): Promise<boolean> {
+  const session = await prisma.daemonSession.findFirst({
+    where: { uuid: sessionUuid, companyUuid: auth.companyUuid, ...ownerScope(auth) },
+    select: { uuid: true },
+  });
+  return session != null;
+}
+
+/**
+ * A turn view carrying its retained `user`/`assistant` transcript messages, ordered
+ * by `seq` within the turn. The per-message shape REUSES the existing
+ * `TranscriptMessageView` (the ingest projection) — there is no second message type.
+ * A turn whose messages were all trimmed by the rolling window appears here with an
+ * empty `messages` array (still a turn, just no retained transcript).
+ */
+export interface TurnWithMessagesView extends TurnView {
+  messages: TranscriptMessageView[];
+}
+
+// Default page size for the transcript read — measured in TURNS (the structural unit
+// the chat renders as bands). A coding-agent session can be woken many times, so the
+// transcript is paged newest-first and "load earlier" walks backward by `seq`; per-
+// message volume is independently bounded by MAX_TRANSCRIPT_MESSAGES_PER_SESSION.
+export const DEFAULT_TRANSCRIPT_TURN_PAGE = 30;
+
+/**
+ * Read projection for the single-session transcript route: the session plus a PAGE of
+ * its ordered turns (each carrying its retained transcript messages), newest-first
+ * windowed but returned in ascending `seq` order for top-to-bottom rendering. `hasMore`
+ * is true when older turns exist before this page; `oldestSeq` is the `seq` of the
+ * earliest turn in this page — the cursor a client passes as `beforeSeq` to load the
+ * previous page. Both are null/false for an empty session.
+ */
+export interface SessionDetailView {
+  session: SessionView;
+  turns: TurnWithMessagesView[];
+  hasMore: boolean;
+  oldestSeq: number | null;
+}
+
+/**
+ * Read a single session WITH its turns-and-messages, applying the SAME owner/self +
+ * companyUuid visibility fence as `getSessionTurns` / `getVisibleSessions`. The
+ * session is first resolved under the caller's visibility scope; a session that does
+ * not exist, lives in another company, or belongs to an agent the caller does not own
+ * all yield the SAME `null` — so the read route returns one 404 in every negative case
+ * without revealing another caller's session exists (non-disclosure, exactly like
+ * `getSessionTurns`).
+ *
+ * On a visible session it loads the turns ordered by `seq`, then loads ALL their
+ * transcript messages in ONE batched query (`where: { turnUuid: { in: [...] } }`,
+ * ordered by `(turnUuid, seq)`) and folds the messages into their turns IN MEMORY —
+ * no N+1, exactly one extra query regardless of turn count (and zero when the session
+ * has no turns). The per-message projection reuses `toTranscriptMessageView` (the
+ * ingest path's mapper) and the `TranscriptMessageView` shape — no new message type.
+ * Messages trimmed by the rolling-window cap are simply absent; a turn whose messages
+ * were all trimmed still appears with an empty `messages` array.
+ *
+ * Returns `null` when the session is not visible (the route maps to 404), or the
+ * `{ session, turns }` detail when it is. A READ that does NOT swallow — a query
+ * failure propagates so the route surfaces a 500 (never a degraded empty transcript).
+ */
+export async function getSessionDetail(
+  auth: { type: string; companyUuid: string; actorUuid: string },
+  sessionUuid: string,
+  // Pagination (newest-first window over TURNS): `limit` caps how many turns this page
+  // returns (default DEFAULT_TRANSCRIPT_TURN_PAGE); `beforeSeq` loads the page of turns
+  // strictly OLDER than that seq (the "load earlier" cursor). Omitting `beforeSeq` loads
+  // the most recent page. A non-positive/oversized `limit` is clamped to a sane range.
+  opts: { limit?: number; beforeSeq?: number | null } = {},
+): Promise<SessionDetailView | null> {
+  const sessionRow = await prisma.daemonSession.findFirst({
+    where: { uuid: sessionUuid, companyUuid: auth.companyUuid, ...ownerScope(auth) },
+  });
+  if (!sessionRow) return null; // not visible → 404 non-disclosure
+
+  // Clamp the page size: at least 1, at most 200 turns per page (a hard ceiling so a
+  // hostile `limit` can't ask for an unbounded scan).
+  const limit = Math.min(
+    Math.max(1, Math.floor(opts.limit ?? DEFAULT_TRANSCRIPT_TURN_PAGE)),
+    200,
+  );
+  const beforeSeq =
+    typeof opts.beforeSeq === "number" && Number.isFinite(opts.beforeSeq)
+      ? opts.beforeSeq
+      : null;
+
+  // Fetch the NEWEST `limit` turns at or before the cursor: order by seq DESC, take
+  // `limit + 1` so the extra row tells us whether an OLDER page exists (hasMore) without
+  // a separate count query. Then reverse to ascending for top-to-bottom rendering.
+  const pageDesc = await prisma.daemonSessionTurn.findMany({
+    where: {
+      sessionUuid,
+      ...(beforeSeq !== null ? { seq: { lt: beforeSeq } } : {}),
+    },
+    orderBy: { seq: "desc" },
+    take: limit + 1,
+  });
+  const hasMore = pageDesc.length > limit;
+  const pageTurns = (hasMore ? pageDesc.slice(0, limit) : pageDesc).reverse(); // ascending
+
+  // Load this page's turns' messages in ONE batched query, then fold in memory — no
+  // N+1. An empty page needs no message query at all.
+  const turnUuids = pageTurns.map((t) => t.uuid);
+  const messages =
+    turnUuids.length > 0
+      ? await prisma.daemonTranscriptMessage.findMany({
+          where: { turnUuid: { in: turnUuids } },
+          orderBy: [{ turnUuid: "asc" }, { seq: "asc" }],
+        })
+      : [];
+
+  // Bucket the messages by their turnUuid so each turn gets exactly its own messages
+  // in seq order (the query already ordered by (turnUuid, seq), so each bucket is in
+  // seq order as appended). A turn with no retained messages keeps an empty array.
+  const messagesByTurn = new Map<string, TranscriptMessageView[]>();
+  for (const m of messages) {
+    const view = toTranscriptMessageView(m);
+    const bucket = messagesByTurn.get(view.turnUuid);
+    if (bucket) bucket.push(view);
+    else messagesByTurn.set(view.turnUuid, [view]);
+  }
+
+  const turnsWithMessages: TurnWithMessagesView[] = pageTurns.map((t) => ({
+    ...toTurnView(t),
+    messages: messagesByTurn.get(t.uuid) ?? [],
+  }));
+
+  return {
+    session: toSessionView(sessionRow),
+    turns: turnsWithMessages,
+    hasMore,
+    oldestSeq: turnsWithMessages.length > 0 ? turnsWithMessages[0].seq : null,
+  };
 }
 
 // ===== Continuation pinning =====
@@ -885,6 +1061,12 @@ export async function appendTranscriptMessages(params: {
         sessionUuid,
         trigger: "transcript_appended",
         turn: toTurnView(turnRow),
+        // Carry the appended message tail on the wire so a viewer patches the turn's
+        // message list live without re-fetching the open session (the round-trip the
+        // Tech Design's Risks section prefers to avoid). These are the SAME
+        // `TranscriptMessageView`s already produced above (`toTranscriptMessageView`) —
+        // no new message shape, and identical to what the read route returns.
+        messages: appendedViews,
       });
     }
   }

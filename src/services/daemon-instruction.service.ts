@@ -45,6 +45,7 @@ import {
   // that error is caught + mapped to 409 at the route layer, so it is not referenced here.
   assertContinuable,
   getVisibleSessions,
+  getFirstInstructionBySessionUuid,
   STALE_THRESHOLD_MS,
   type SessionView,
   type TurnView,
@@ -156,6 +157,20 @@ export interface SessionTargetView extends SessionView {
    * so the UI gates the send control without a second round-trip.
    */
   originOnline: boolean;
+  /**
+   * The conversation's opening human instruction — the `promptText` of its earliest
+   * `human_instruction` turn — used to NAME an ad-hoc conversation (a chat is titled by
+   * what the human first said, not by a uuid). Null when the session has no
+   * human_instruction turn yet (e.g. an idea conversation woken only by autonomous
+   * triggers), in which case the UI falls back to the idea/ad-hoc label.
+   */
+  firstInstruction: string | null;
+  /**
+   * The title of the session's anchoring idea (`directIdeaUuid`), batch-resolved
+   * in-company — used to NAME an idea-anchored conversation (a resource badge + this
+   * title). Null for an ad-hoc session, or when the idea no longer resolves.
+   */
+  ideaTitle: string | null;
 }
 
 // ===== Helpers =====
@@ -514,8 +529,34 @@ export async function getVisibleSessionsWithOrigin(
       .map((c) => c.uuid),
   );
 
+  // Naming enrichment, both batched (one query each) and run IN PARALLEL since they are
+  // independent — halving the added latency on this 15s-polled endpoint:
+  //  - firstInstruction: the earliest `human_instruction` per session (shared helper),
+  //    so an ad-hoc conversation is named by what the human first said.
+  //  - ideaTitle: the anchoring idea's title, so an idea-anchored conversation is named
+  //    by its resource (badge + title) instead of a uuid.
+  const ideaUuids = [
+    ...new Set(sessions.map((s) => s.directIdeaUuid).filter((u): u is string => !!u)),
+  ];
+  // Fire both independent reads, then await together (parallel, halved added latency).
+  const firstInstructionPromise = getFirstInstructionBySessionUuid(
+    sessions.map((s) => s.uuid),
+  );
+  const ideasPromise: Promise<{ uuid: string; title: string }[]> =
+    ideaUuids.length > 0
+      ? prisma.idea.findMany({
+          where: { companyUuid: auth.companyUuid, uuid: { in: ideaUuids } },
+          select: { uuid: true, title: true },
+        })
+      : Promise.resolve([]);
+  const firstInstructionBySession = await firstInstructionPromise;
+  const ideas = await ideasPromise;
+  const ideaTitleByUuid = new Map(ideas.map((i) => [i.uuid, i.title]));
+
   return sessions.map((s) => ({
     ...s,
     originOnline: onlineConnectionUuids.has(s.originConnectionUuid),
+    firstInstruction: firstInstructionBySession.get(s.uuid) ?? null,
+    ideaTitle: s.directIdeaUuid ? ideaTitleByUuid.get(s.directIdeaUuid) ?? null : null,
   }));
 }

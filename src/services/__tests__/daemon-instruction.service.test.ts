@@ -5,7 +5,13 @@ const mockPrisma = vi.hoisted(() => ({
   daemonSession: {
     findFirst: vi.fn(),
   },
+  daemonSessionTurn: {
+    findMany: vi.fn(),
+  },
   daemonConnection: {
+    findMany: vi.fn(),
+  },
+  idea: {
     findMany: vi.fn(),
   },
   agent: {
@@ -21,6 +27,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 const mockResolveOrCreateSession = vi.fn();
 const mockAssertContinuable = vi.fn();
 const mockGetVisibleSessions = vi.fn();
+const mockGetFirstInstruction = vi.fn();
 vi.mock("@/services/daemon-session.service", () => {
   // Defined inside the factory (hoisted with the mock) so the class is initialized
   // before the SUT imports it. Mirrors the real SessionReadOnlyError shape.
@@ -37,6 +44,7 @@ vi.mock("@/services/daemon-session.service", () => {
     resolveOrCreateSession: (...a: unknown[]) => mockResolveOrCreateSession(...a),
     assertContinuable: (...a: unknown[]) => mockAssertContinuable(...a),
     getVisibleSessions: (...a: unknown[]) => mockGetVisibleSessions(...a),
+    getFirstInstructionBySessionUuid: (...a: unknown[]) => mockGetFirstInstruction(...a),
     SessionReadOnlyError,
     STALE_THRESHOLD_MS: 90_000,
   };
@@ -148,6 +156,10 @@ beforeEach(() => {
     originConnectionUuid: connectionUuid,
   });
   mockPrisma.daemonConnection.findMany.mockResolvedValue([]);
+  // Naming enrichment defaults: no instruction turns + no ideas resolved unless a test
+  // says otherwise (so originOnline-only tests don't need to wire them).
+  mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([]);
+  mockPrisma.idea.findMany.mockResolvedValue([]);
   mockPrisma.agent.count.mockResolvedValue(1);
   mockAssertContinuable.mockResolvedValue(connectionUuid);
   // createReturningTurn returns the notification + the EXACT turn the chokepoint created.
@@ -156,6 +168,8 @@ beforeEach(() => {
   mockConnectionBelongsToAgent.mockResolvedValue(true);
   mockIsConnectionLive.mockResolvedValue(true);
   mockGetVisibleSessions.mockResolvedValue([]);
+  // Naming enrichment helper defaults to "no opening instruction" unless a test wires it.
+  mockGetFirstInstruction.mockResolvedValue(new Map());
 });
 
 // ===== Constants =====
@@ -584,6 +598,51 @@ describe("getVisibleSessionsWithOrigin", () => {
     mockPrisma.daemonConnection.findMany.mockResolvedValue([]);
     const out = await getVisibleSessionsWithOrigin(userAuth);
     expect(out[0].originOnline).toBe(false);
+  });
+
+  it("enriches naming: firstInstruction (earliest human_instruction) per session + ideaTitle for idea-anchored", async () => {
+    const adHocUuid = "sess-adhoc";
+    const ideaSessUuid = "sess-idea";
+    mockGetVisibleSessions.mockResolvedValue([
+      sessionView({ uuid: adHocUuid, sessionId: "sid-adhoc", directIdeaUuid: null }),
+      sessionView({ uuid: ideaSessUuid, sessionId: "idea-9", directIdeaUuid: "idea-9" }),
+    ]);
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([
+      { uuid: connectionUuid, status: "online", lastSeenAt: new Date() },
+    ]);
+    // The shared helper resolves opening instructions per sessionUuid (its own
+    // first-seen-wins logic is unit-tested in daemon-session.service.test).
+    mockGetFirstInstruction.mockResolvedValue(
+      new Map([[adHocUuid, "Refactor the uploader"]]),
+    );
+    mockPrisma.idea.findMany.mockResolvedValue([{ uuid: "idea-9", title: "Presence pill" }]);
+
+    const out = await getVisibleSessionsWithOrigin(userAuth);
+    const adHoc = out.find((s) => s.uuid === adHocUuid)!;
+    const ideaSess = out.find((s) => s.uuid === ideaSessUuid)!;
+
+    expect(adHoc.firstInstruction).toBe("Refactor the uploader");
+    expect(adHoc.ideaTitle).toBeNull(); // ad-hoc has no idea
+    expect(ideaSess.ideaTitle).toBe("Presence pill");
+
+    // The shared first-instruction helper is called once with all session uuids; the
+    // idea query is batched once.
+    expect(mockGetFirstInstruction).toHaveBeenCalledTimes(1);
+    expect(mockGetFirstInstruction.mock.calls[0][0].sort()).toEqual(
+      [adHocUuid, ideaSessUuid].sort(),
+    );
+    expect(mockPrisma.idea.findMany).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.idea.findMany.mock.calls[0][0].where.uuid.in).toEqual(["idea-9"]);
+  });
+
+  it("skips the idea query entirely when no session is idea-anchored", async () => {
+    mockGetVisibleSessions.mockResolvedValue([
+      sessionView({ uuid: "s1", sessionId: "sid-1", directIdeaUuid: null }),
+    ]);
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([]);
+    const out = await getVisibleSessionsWithOrigin(userAuth);
+    expect(out[0].ideaTitle).toBeNull();
+    expect(mockPrisma.idea.findMany).not.toHaveBeenCalled();
   });
 
   it("returns NO turn/transcript bodies — only session metadata + originOnline", async () => {
