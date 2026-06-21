@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { X, Loader2, User, Trash2, ArrowRightLeft, Pencil, GitFork, CornerLeftUp, CornerDownRight } from "lucide-react";
+import { X, Loader2, User, Trash2, ArrowRightLeft, Pencil, GitFork, CornerLeftUp, CornerDownRight, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
@@ -37,8 +37,11 @@ import { SetParentDialog } from "./set-parent-dialog";
 import { NewIdeaDialog } from "../new-idea-dialog";
 import { deleteIdeaAction, updateIdeaAction } from "@/app/(dashboard)/projects/[uuid]/ideas/actions";
 import { getIdeaAction, getTaskAction, getProposalsForIdeaAction, getTasksForProposalAction } from "./actions";
+import { getElaborationAction, verifyElaborationAction } from "@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/elaboration-actions";
 import { AssignIdeaModal } from "@/app/(dashboard)/projects/[uuid]/ideas/assign-idea-modal";
 import type { IdeaResponse } from "@/services/idea.service";
+import type { ElaborationResponse } from "@/types/elaboration";
+import { canVerifyElaboration } from "@/lib/elaboration-verify";
 import { clientLogger } from "@/lib/logger-client";
 import { formatDateTime } from "@/lib/format-date";
 
@@ -174,6 +177,16 @@ export function IdeaDetailPanel({
   // Footer/modal state
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Elaboration data — loaded once here and shared between the elaboration tab
+  // view and the footer's "Verify Elaborate" gate (no separate fetch each).
+  const [elaboration, setElaboration] = useState<ElaborationResponse | null>(null);
+  const [isLoadingElaboration, setIsLoadingElaboration] = useState(true);
+
+  // Verify elaboration state
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
+  const [verified, setVerified] = useState(false);
 
   // Edit mode state
   const [isEditing, setIsEditing] = useState(false);
@@ -322,6 +335,22 @@ export function IdeaDetailPanel({
   }, [fetchTasks]);
 
   useRealtimeEntityTypeEvent("task", fetchTasks);
+
+  // ===== Lift data fetching: Elaboration (shared by tab view + verify gate) =====
+  const fetchElaboration = useCallback(async () => {
+    if (!ideaUuidForFetch) return;
+    const result = await getElaborationAction(ideaUuidForFetch);
+    if (result.success && result.data) {
+      setElaboration(result.data);
+    }
+    setIsLoadingElaboration(false);
+  }, [ideaUuidForFetch]);
+
+  useEffect(() => {
+    fetchElaboration();
+  }, [fetchElaboration]);
+
+  useRealtimeEntityTypeEvent("idea", fetchElaboration);
 
   // ===== Tab visibility & default =====
   const visibleTabs = useMemo(
@@ -484,10 +513,40 @@ export function IdeaDetailPanel({
     }
   };
 
+  const handleVerify = async () => {
+    if (!idea) return;
+    setIsVerifying(true);
+    setVerifyError(null);
+
+    const result = await verifyElaborationAction(idea.uuid);
+
+    setIsVerifying(false);
+
+    if (result.success) {
+      // Idea → elaborated; derived display status becomes `planning` and the
+      // assigned daemon agent is woken (or backfilled when offline) to write
+      // the proposal. Agent liveness isn't known client-side, so a single
+      // queued hint covers both online + offline.
+      setVerified(true);
+      await fetchIdea();
+      router.refresh();
+    } else {
+      setVerifyError(result.error || t("elaboration.verifyFailed"));
+    }
+  };
+
   const status = idea?.derivedStatus || "todo";
   const canAssign = idea ? idea.status !== "elaborated" : false;
   const elaborationResolved = idea?.elaborationStatus === "resolved";
-  const showHelpText = idea?.status === "elaborating" && !elaborationResolved;
+  // Shared enable-predicate (same helper as the /ideas idea-detail panel) so
+  // the two surfaces never drift.
+  const canVerify = canVerifyElaboration({
+    ideaStatus: idea?.status,
+    elaborationStatus: idea?.elaborationStatus,
+    elaboration,
+  });
+  const showHelpText =
+    idea?.status === "elaborating" && !elaborationResolved && !canVerify && !verified;
 
   return (
     <>
@@ -709,7 +768,9 @@ export function IdeaDetailPanel({
                           >
                             <CornerLeftUp className="h-3.5 w-3.5 shrink-0 text-[#888780]" />
                             <span className="shrink-0 text-[12px] text-[#888780]">{tLineage("derivedFrom")}</span>
-                            <span className="truncate text-[12px] font-medium text-[#5F5E5A]">{idea.parent.title}</span>
+                            {/* min-w-0 flex-1 so a long parent title truncates
+                                instead of stretching the breadcrumb past the panel. */}
+                            <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-[#5F5E5A]">{idea.parent.title}</span>
                           </button>
                         ) : (
                           <p className="px-1 text-[12px] text-[#A8A498]">{tLineage("noParent")}</p>
@@ -760,7 +821,12 @@ export function IdeaDetailPanel({
                     <div style={{ display: activeTab === "elaboration" ? "block" : "none" }}>
                       <ElaborationView
                         idea={idea}
-                        onRefresh={fetchIdea}
+                        elaboration={elaboration}
+                        isLoading={isLoadingElaboration}
+                        onRefresh={async () => {
+                          await fetchElaboration();
+                          await fetchIdea();
+                        }}
                       />
                     </div>
                   )}
@@ -847,7 +913,37 @@ export function IdeaDetailPanel({
                     {idea.assignee ? t("common.reassign") : t("common.assign")}
                   </Button>
                 )}
-                <div className="flex-1 min-w-0">
+                <div className="flex-1 min-w-0 flex flex-wrap items-center gap-2">
+                  {/* Verify Elaborate — human "elaboration confirmed, agent
+                      writes the proposal" action, gated by the shared
+                      predicate. No manual create-proposal fallback here. */}
+                  {canVerify && !verified && (
+                    <Button
+                      className="bg-[#C67A52] hover:bg-[#B56A42] text-white"
+                      onClick={handleVerify}
+                      disabled={isVerifying}
+                    >
+                      {isVerifying ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          {t("elaboration.verifying")}
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle2 className="mr-2 h-4 w-4" />
+                          {t("elaboration.verifyButton")}
+                        </>
+                      )}
+                    </Button>
+                  )}
+                  {verified && (
+                    <span className="text-[11px] text-[#00796B]">
+                      {t("elaboration.verifiedQueuedHint")}
+                    </span>
+                  )}
+                  {verifyError && (
+                    <span className="text-[11px] text-destructive">{verifyError}</span>
+                  )}
                   {showHelpText && (
                     <span className="text-[11px] text-[#9A9A9A]">
                       {t("elaboration.elaborationRequiredHint")}

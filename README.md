@@ -100,6 +100,31 @@ DATABASE_URL=postgresql://user:pass@host:5432/chorus chorus
 | **Docker (full stack)** | [`docker compose up`](#quick-start-with-docker-recommended) (PostgreSQL + Redis + Chorus) |
 | **AWS CDK** | [Deploy to AWS](#deploy-to-aws) |
 
+### `chorus daemon` — Connect as Agent Runtime
+
+The `chorus daemon` connects your local machine to a remote Chorus server as an agent runtime and executes tasks assigned by Chorus.
+
+> **Current version:** Only **Claude Code** is supported. Support for other agent CLIs (Codex, Copilot, etc.) is planned for future releases.
+
+```bash
+chorus login                     # Authenticate (opens browser)
+chorus daemon                    # Start daemon in foreground
+chorus daemon -d                 # Start daemon in background (detached)
+chorus daemon stop               # Stop background daemon
+chorus daemon status             # Check daemon status
+chorus daemon restart            # Restart background daemon
+chorus daemon logs               # View daemon logs
+```
+
+**Key features:**
+
+- **Claude Code integration** — Auto-detects `claude` CLI on your PATH
+- **Background mode** — Run with `-d` flag; manage with `stop/restart/logs`
+- **Permission modes** — Default is full access (yolo); use `--chorus-only` to restrict to Chorus MCP tools only
+- **Interactive setup** — Prompts for credentials on first start if not already configured
+
+The daemon requires authentication. Run `chorus login` first, or it will prompt for credentials interactively on first start (if running in a terminal).
+
 ---
 
 ## Screenshots

@@ -4,7 +4,7 @@ description: Chorus Idea workflow — claim ideas, run elaboration rounds, and p
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.10.0"
+  version: "0.11.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -303,4 +303,5 @@ This is a soft heuristic, not a rule — use judgment. Cycle prevention is autom
 ## Next
 
 - Once elaboration is resolved, use `/proposal` to create a Proposal with document and task drafts
+- **Human "Verify Elaborate" handoff:** when a human clicks **Verify Elaborate** on the idea-detail panel, Chorus resolves the elaboration and wakes the Idea's assigned daemon agent to write the proposal — so the woken agent picks up this idea→proposal handoff automatically (no human-authored proposal needed).
 - For platform overview and shared tools, see `/chorus`

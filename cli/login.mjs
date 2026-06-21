@@ -1,0 +1,151 @@
+// cli/login.mjs
+// `chorus login` — validate a Chorus url + cho_ API key and persist them to
+// ~/.chorus/daemon.json (0600). On validation failure, nothing is written.
+// Plain ESM; the only dependency is the in-repo MCP SDK (via chorus-client).
+
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { createInterface } from "node:readline";
+
+import { loginFilePath } from "./credentials.mjs";
+import { validateAndFetchIdentity } from "./chorus-client.mjs";
+
+/**
+ * Prompt for a line of input. When `mask` is true, typed characters are not
+ * echoed (used for the secret API key — cli-auth spec "interactive key entry
+ * is masked").
+ *
+ * @param {string} query
+ * @param {{ mask?: boolean, input?: NodeJS.ReadableStream, output?: NodeJS.WritableStream }} [opts]
+ * @returns {Promise<string>}
+ */
+export function prompt(query, opts = {}) {
+  const input = opts.input ?? process.stdin;
+  const output = opts.output ?? process.stdout;
+  const mask = opts.mask ?? false;
+
+  return new Promise((resolve) => {
+    const rl = createInterface({ input, output, terminal: true });
+    if (mask) {
+      // Suppress echo: intercept the readline-internal write so typed chars
+      // (and the key itself) never render. The prompt string still shows.
+      const writeToOutput = /** @type {(s: string) => void} */ (
+        rl._writeToOutput?.bind(rl)
+      );
+      rl._writeToOutput = (str) => {
+        if (str === query || str.includes("\n") || str.includes("\r")) {
+          if (writeToOutput) writeToOutput(str);
+          else output.write(str);
+        }
+        // otherwise swallow — no echo of secret characters
+      };
+    }
+    rl.question(query, (answer) => {
+      rl.close();
+      if (mask) output.write("\n");
+      resolve(answer.trim());
+    });
+  });
+}
+
+/**
+ * Persist credentials + identity to the login file with owner-only perms.
+ *
+ * Writing the file with a fresh credential object intentionally OMITS any
+ * `yoloAckAt` that a previous file carried — a credential change (re-login)
+ * clears the yolo acknowledgement, so the next yolo TTY start re-confirms once
+ * (daemon-permission-mode spec). To preserve an existing ack across an
+ * unrelated rewrite, the caller must read it first and pass it in `data`.
+ *
+ * @param {{ url: string, apiKey: string, agentUuid: string, agentName: string, yoloAckAt?: string }} data
+ * @param {{ path?: string, write?: (p: string, c: string, o: object) => void, mkdir?: (p: string, o: object) => void }} [deps]
+ */
+export function writeLoginFile(data, deps = {}) {
+  const path = deps.path ?? loginFilePath();
+  const write = deps.write ?? writeFileSync;
+  const mkdir = deps.mkdir ?? mkdirSync;
+  mkdir(dirname(path), { recursive: true });
+  write(path, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
+  return path;
+}
+
+/**
+ * Record (or refresh) the yolo acknowledgement in the existing login file,
+ * preserving the credentials already on disk. Reads the current file, merges
+ * `yoloAckAt`, and rewrites with 0600. Used by the daemon after an interactive
+ * TTY yolo confirmation — it does NOT touch url/apiKey/identity.
+ *
+ * No-silent-errors: a read/parse failure is surfaced to the caller (throws), so
+ * the daemon can log it rather than silently losing the ack.
+ *
+ * @param {string} yoloAckAt  ISO-8601 timestamp of the confirmation.
+ * @param {{ path?: string, read?: (p: string) => string, write?: typeof writeLoginFile }} [deps]
+ * @returns {string} the file path written
+ */
+export function recordYoloAck(yoloAckAt, deps = {}) {
+  const path = deps.path ?? loginFilePath();
+  const read = deps.read ?? ((p) => readFileSync(p, "utf8"));
+  const write = deps.write ?? writeLoginFile;
+  // Start from the existing file when present, else an empty object: a TTY user
+  // whose credentials come from env / flags has no login file yet, but the ack
+  // must still persist (else they'd re-confirm yolo on every start). A file
+  // carrying only `yoloAckAt` is harmless — resolveCredentials simply falls
+  // through it, and a later `chorus login` overwrites (clearing the ack).
+  let current = {};
+  try {
+    const parsed = JSON.parse(read(path));
+    if (parsed && typeof parsed === "object") current = parsed;
+  } catch {
+    // missing / unreadable / malformed → treat as empty (start fresh)
+  }
+  return write({ ...current, yoloAckAt }, { path });
+}
+
+/**
+ * Run the login flow: collect url + key (flags or interactive), validate
+ * against the server, and on success persist + echo identity. Returns an exit
+ * code (0 success, non-zero failure). Never throws.
+ *
+ * @param {{ url?: string, apiKey?: string }} flags
+ * @param {{
+ *   validate?: typeof validateAndFetchIdentity,
+ *   write?: typeof writeLoginFile,
+ *   prompt?: typeof prompt,
+ *   log?: (m: string) => void,
+ *   errLog?: (m: string) => void,
+ * }} [deps]
+ * @returns {Promise<number>}
+ */
+export async function runLogin(flags = {}, deps = {}) {
+  const validate = deps.validate ?? validateAndFetchIdentity;
+  const write = deps.write ?? writeLoginFile;
+  const ask = deps.prompt ?? prompt;
+  const log = deps.log ?? ((m) => process.stdout.write(m + "\n"));
+  const errLog = deps.errLog ?? ((m) => process.stderr.write(m + "\n"));
+
+  let url = typeof flags.url === "string" && flags.url.trim() ? flags.url.trim() : "";
+  let apiKey = typeof flags.apiKey === "string" && flags.apiKey.trim() ? flags.apiKey.trim() : "";
+
+  if (!url) url = await ask("Chorus URL: ");
+  if (!apiKey) apiKey = await ask("Chorus API key (cho_...): ", { mask: true });
+
+  if (!url || !apiKey) {
+    errLog("Login aborted: both a URL and an API key are required.");
+    return 1;
+  }
+
+  let identity;
+  try {
+    identity = await validate({ url, apiKey });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    errLog(`Login failed: ${msg}`);
+    errLog("Credentials were NOT saved.");
+    return 1;
+  }
+
+  const path = write({ url, apiKey, agentUuid: identity.uuid, agentName: identity.name });
+  log(`Logged in as ${identity.name} (${identity.uuid}).`);
+  log(`Credentials saved to ${path}.`);
+  return 0;
+}

@@ -31,6 +31,59 @@ export interface PresenceEvent {
   timestamp: number;
 }
 
+/**
+ * Reverse server→daemon control command (子3 — daemon-interrupt-resume).
+ *
+ * Published on the per-connection `control:{connectionUuid}` channel and delivered
+ * to the targeted daemon on its existing notification SSE stream. This is purely
+ * ADDITIVE to the notification/presence/change/execution events — it does NOT
+ * alter any of them and rides the same Redis fan-out so a multi-instance
+ * deployment delivers it from whichever instance holds that daemon's stream.
+ *
+ * Critically this is NOT a wake: it is delivered as a distinct SSE `type:"control"`
+ * the daemon's listener forks to a control handler, never to the WakeQueue, and it
+ * is never persisted as a Notification nor a member of the daemon's WAKE_ACTIONS.
+ *
+ * `targetConnectionUuid` is carried in the payload as a defense-in-depth re-check
+ * on the daemon side (the routing key already scopes delivery per connection), and
+ * `{entityType, entityUuid}` lets the daemon self-check it actually holds that
+ * entity's running subprocess before acting.
+ *
+ * `entityType`/`entityUuid` are OPTIONAL because `deliver_turn` (子2 — origin-only
+ * live delivery of a `human_instruction`) carries ONLY `targetConnectionUuid` +
+ * `turnUuid`: the daemon dispatches PRECISELY that one turn (not a connection-wide
+ * sweep), and an ad-hoc session's `sessionId` is a non-lineage key that would not fit
+ * the fixed CONTROL_ENTITY_TYPES union `interrupt`/`resume` use. `interrupt`/`resume`
+ * still carry both entity fields (the dispatch path / route only omit them for
+ * `deliver_turn`).
+ *
+ * `turnUuid` is the precise target of a `deliver_turn` ping (子2 — the freshly-created
+ * `human_instruction` turn's uuid). The daemon runs ONLY that turn, so a fresh send no
+ * longer drags every other still-`pending` turn of the connection along with it. It is
+ * present ONLY for `deliver_turn`; the connection-wide reconnect-backfill sweep (the
+ * lost-ping safety net) needs no turnUuid and is unaffected.
+ */
+export interface ControlEvent {
+  type: "control";
+  command: "interrupt" | "resume" | "deliver_turn";
+  targetConnectionUuid: string;
+  // `daemon_session` is the ad-hoc conversation itself (子3 follow-up): an interrupt/
+  // resume can target a running conversation that has no task/idea/proposal/document
+  // behind it, keyed by the session business id.
+  entityType?: "task" | "idea" | "proposal" | "document" | "daemon_session";
+  entityUuid?: string;
+  turnUuid?: string;
+}
+
+/**
+ * EventBus channel name for a daemon connection's reverse control commands.
+ * Keyed per connection (NOT per agent) so an interrupt reaches only the one daemon
+ * stream holding the subprocess, never every connection of the agent.
+ */
+export function controlEventName(connectionUuid: string): string {
+  return `control:${connectionUuid}`;
+}
+
 // Single Redis channel for all events (ElastiCache Serverless doesn't support PSUBSCRIBE)
 const REDIS_CHANNEL = "chorus:events";
 

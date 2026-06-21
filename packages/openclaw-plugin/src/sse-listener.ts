@@ -1,3 +1,8 @@
+import { readFileSync } from "node:fs";
+import { hostname } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 export type SseListenerStatus = "connected" | "disconnected" | "reconnecting";
 
 export interface SseNotificationEvent {
@@ -8,10 +13,42 @@ export interface SseNotificationEvent {
   [key: string]: unknown;
 }
 
+/**
+ * The server's post-handshake `connection_registered` data event (carrying the
+ * DaemonConnection uuid this stream registered as). Forked to `onConnectionId`,
+ * NEVER to the wake path. See api/events/notifications/route.ts.
+ */
+export interface SseControlEvent {
+  type: string; // "control" | "connection_registered"
+  command?: string; // interrupt | resume | deliver_turn (control only)
+  connectionUuid?: string; // connection_registered only
+  targetConnectionUuid?: string; // control only
+  entityType?: string;
+  entityUuid?: string;
+  turnUuid?: string;
+  [key: string]: unknown;
+}
+
 export interface ChorusSseListenerOptions {
   chorusUrl: string;
   apiKey: string;
   onEvent: (event: SseNotificationEvent) => void;
+  /**
+   * Called once the server reports which DaemonConnection this stream registered
+   * as (the `connection_registered` data event). Stored as the connection
+   * identity (connection-state) and refreshed on every reconnect. This event is
+   * NOT a wake — it is forked here BEFORE `onEvent`, so the router never sees it.
+   */
+  onConnectionId?: (connectionUuid: string) => void;
+  /**
+   * Called for a `type:"control"` data event (the reverse control channel). This
+   * is NOT a wake: the control event is forked here BEFORE `onEvent`, so the
+   * router / wake path never sees it and it can never spawn a new embedded-agent
+   * run for the control event itself. The handler verifies the target connection
+   * (+ entity, for interrupt) and routes to the behavior hooks — see
+   * control-handler.ts.
+   */
+  onControl?: (event: SseControlEvent) => void;
   onReconnect: () => Promise<void>;
   logger: { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
 }
@@ -19,8 +56,37 @@ export interface ChorusSseListenerOptions {
 const INITIAL_DELAY_MS = 1_000;
 const MAX_DELAY_MS = 30_000;
 
+// Plugin version — read from this package's own package.json so the value the
+// server's DaemonConnection registry records always matches the installed
+// plugin rather than a hardcoded literal. The compiled output lives in dist/
+// and the source in src/; both are one level under the package root, so
+// "../package.json" resolves to the package manifest in either case. Defensive:
+// fall back to "0.0.0" if the manifest is unreadable — a missing version must
+// never block the listener from connecting.
+function readPluginVersion(): string {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const pkg = JSON.parse(readFileSync(join(here, "..", "package.json"), "utf8")) as {
+      version?: unknown;
+    };
+    return typeof pkg.version === "string" && pkg.version ? pkg.version : "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
+const PLUGIN_VERSION = readPluginVersion();
+
+// Plugin process start time, captured once at module load. Reconnects re-send
+// this original start (recomputed to ISO-8601 at URL-construction time), not the
+// reconnect moment.
+const PROCESS_STARTED_AT = new Date();
+
 export class ChorusSseListener {
   private readonly opts: ChorusSseListenerOptions;
+  private readonly onConnectionId: (connectionUuid: string) => void;
+  private readonly onControl: (event: SseControlEvent) => void;
+  private readonly endpoint: string;
   private _status: SseListenerStatus = "disconnected";
   private abortController: AbortController | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -28,6 +94,23 @@ export class ChorusSseListener {
 
   constructor(opts: ChorusSseListenerOptions) {
     this.opts = opts;
+    // Default the optional bidirectional callbacks to no-ops so a caller that
+    // only wants the wake path (no daemon reporting) still works unchanged.
+    this.onConnectionId = opts.onConnectionId ?? (() => {});
+    this.onControl = opts.onControl ?? (() => {});
+
+    // Build the self-reporting endpoint URL once and reuse it across every
+    // (re)connect, so the reconnect path always re-sends the same params. The
+    // CLI reports clientType=openclaw so the server's connection registry can
+    // distinguish an OpenClaw daemon from a chorus CLI (claude_code) daemon.
+    // These params are display-only metadata; auth remains the Bearer header.
+    const params = new URLSearchParams({
+      clientType: "openclaw",
+      clientVersion: PLUGIN_VERSION,
+      host: hostname(),
+      startedAt: PROCESS_STARTED_AT.toISOString(),
+    });
+    this.endpoint = `${this.opts.chorusUrl.replace(/\/$/, "")}/api/events/notifications?${params.toString()}`;
   }
 
   get status(): SseListenerStatus {
@@ -41,11 +124,9 @@ export class ChorusSseListener {
     const abortController = new AbortController();
     this.abortController = abortController;
 
-    const url = `${this.opts.chorusUrl.replace(/\/$/, "")}/api/events/notifications`;
-
     let response: Response;
     try {
-      response = await fetch(url, {
+      response = await fetch(this.endpoint, {
         headers: {
           Authorization: `Bearer ${this.opts.apiKey}`,
           Accept: "text/event-stream",
@@ -151,12 +232,43 @@ export class ChorusSseListener {
       // Data lines
       if (line.startsWith("data: ")) {
         const jsonStr = line.slice(6);
+        let event: SseNotificationEvent;
         try {
-          const event: SseNotificationEvent = JSON.parse(jsonStr);
-          this.opts.onEvent(event);
+          event = JSON.parse(jsonStr);
         } catch (err) {
           this.opts.logger.warn(`SSE JSON parse error: ${err} — raw: ${jsonStr}`);
+          continue;
         }
+
+        // The server's post-handshake `connection_registered` data event tells us
+        // which DaemonConnection this stream registered as. Capture it (the
+        // connection identity used to attribute reports + double-check control
+        // commands) and do NOT forward it to the wake path — it isn't a
+        // notification. Forked here so the router never logs it as ignored.
+        if (event.type === "connection_registered" && typeof event.connectionUuid === "string") {
+          try {
+            this.onConnectionId(event.connectionUuid);
+          } catch (err) {
+            this.opts.logger.warn(`onConnectionId callback error: ${err}`);
+          }
+          continue;
+        }
+
+        // Reverse control channel: a `type:"control"` event is NOT a wake. Fork it
+        // to onControl and `continue` — it MUST NEVER fall through to onEvent (the
+        // router / wake path), or a control command could be mistaken for a wake and
+        // spawn a new embedded-agent run. This is the structural guarantee the spec
+        // requires.
+        if (event.type === "control") {
+          try {
+            this.onControl(event as SseControlEvent);
+          } catch (err) {
+            this.opts.logger.warn(`onControl callback error: ${err}`);
+          }
+          continue;
+        }
+
+        this.opts.onEvent(event);
       }
     }
   }
