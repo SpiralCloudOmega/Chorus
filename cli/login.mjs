@@ -86,7 +86,18 @@ export function recordYoloAck(yoloAckAt, deps = {}) {
   const path = deps.path ?? loginFilePath();
   const read = deps.read ?? ((p) => readFileSync(p, "utf8"));
   const write = deps.write ?? writeLoginFile;
-  const current = JSON.parse(read(path));
+  // Start from the existing file when present, else an empty object: a TTY user
+  // whose credentials come from env / flags has no login file yet, but the ack
+  // must still persist (else they'd re-confirm yolo on every start). A file
+  // carrying only `yoloAckAt` is harmless — resolveCredentials simply falls
+  // through it, and a later `chorus login` overwrites (clearing the ack).
+  let current = {};
+  try {
+    const parsed = JSON.parse(read(path));
+    if (parsed && typeof parsed === "object") current = parsed;
+  } catch {
+    // missing / unreadable / malformed → treat as empty (start fresh)
+  }
   return write({ ...current, yoloAckAt }, { path });
 }
 

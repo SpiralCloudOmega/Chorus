@@ -129,7 +129,6 @@ export function startBackground(spec, io = defaultIO()) {
   // Append so restarts keep history; the child owns the fd after spawn.
   const out = io.openSync(logFile, "a");
 
-  const isWin = (io.platform ?? process.platform) === "win32";
   const child = io.spawn(spec.nodePath, spec.args, {
     cwd: spec.cwd ?? process.cwd(),
     env: { ...(spec.env ?? {}) },

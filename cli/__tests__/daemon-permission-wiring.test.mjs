@@ -150,6 +150,31 @@ describe("runDaemon — --agent validation", () => {
   });
 });
 
+describe("recordYoloAck — persists even with no prior login file (env/flag creds)", () => {
+  it("treats a missing login file as empty and still writes yoloAckAt", () => {
+    // A TTY user whose creds came from env/flags has no ~/.chorus/daemon.json yet.
+    // recordYoloAck must NOT throw on ENOENT — it must write a file carrying the ack.
+    let written;
+    const path = recordYoloAck("2026-06-21T12:00:00.000Z", {
+      path: "/p/daemon.json",
+      read: () => { throw Object.assign(new Error("ENOENT"), { code: "ENOENT" }); },
+      write: (data, deps) => { written = data; return deps.path; },
+    });
+    expect(path).toBe("/p/daemon.json");
+    expect(written).toEqual({ yoloAckAt: "2026-06-21T12:00:00.000Z" });
+  });
+
+  it("treats a malformed login file as empty (does not throw)", () => {
+    let written;
+    recordYoloAck("2026-06-21T12:00:00.000Z", {
+      path: "/p/daemon.json",
+      read: () => "}{ not json",
+      write: (data) => { written = data; return "/p/daemon.json"; },
+    });
+    expect(written).toEqual({ yoloAckAt: "2026-06-21T12:00:00.000Z" });
+  });
+});
+
 describe("writeLoginFile — a re-login clears any prior ack", () => {
   it("writing fresh credentials omits yoloAckAt (login data carries none)", () => {
     let body;

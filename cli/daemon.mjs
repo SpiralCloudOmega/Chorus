@@ -348,7 +348,7 @@ export async function runDaemon(flags = {}, deps = {}) {
 
   const action = flags.action ?? "run";
   if (action !== "run") {
-    return handleLifecycleAction(action, { flags, env, log, errLog, lifecycle, pfDeps });
+    return handleLifecycleAction(action, { log, errLog, lifecycle, pfDeps });
   }
 
   // `-d` / --detach: complete any interactive preflight in THIS foreground process
@@ -511,7 +511,7 @@ export async function preflight(ctx) {
  * is running (no silent failure). `restart` performs stop-then-detached-start.
  * @returns {Promise<number>} exit code
  */
-export async function handleLifecycleAction(action, { flags, env, log, errLog, lifecycle, pfDeps }) {
+export async function handleLifecycleAction(action, { log, errLog, lifecycle, pfDeps }) {
   if (action === "status") {
     const s = lifecycle.isRunning();
     if (s.running) log(`[Chorus] daemon is running (pid ${s.pid}).`);
