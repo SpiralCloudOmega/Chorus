@@ -1,18 +1,13 @@
 // cli/__tests__/daemon-permission-mode.test.mjs
-// Covers daemon-permission-mode spec: default-yolo, TTY confirm + ack, non-TTY
-// warn-only, --chorus-only reverse switch.
+// Covers daemon-permission-mode spec: default-yolo (no confirmation), non-TTY
+// warn, --chorus-only reverse switch. The interactive yolo y/N confirmation +
+// ack persistence were removed (daemon always starts yolo and warns instead),
+// so there is no longer a `needConfirm` path, ack helpers, or confirm prompt.
 import { describe, it, expect } from "vitest";
-import {
-  resolvePermissionMode,
-  hasValidAck,
-  isAffirmative,
-  yoloWarningLine,
-  YOLO_CONFIRM_PROMPT,
-} from "../daemon-permission-mode.mjs";
+import { resolvePermissionMode, yoloWarningLine } from "../daemon-permission-mode.mjs";
 
-const TTY = { isTTY: true, hasAck: false };
-const TTY_ACKED = { isTTY: true, hasAck: true };
-const NONTTY = { isTTY: false, hasAck: false };
+const TTY = { isTTY: true };
+const NONTTY = { isTTY: false };
 
 describe("resolvePermissionMode — default + explicit yolo", () => {
   it("defaults to yolo with no flags/env", () => {
@@ -50,25 +45,15 @@ describe("resolvePermissionMode — restricted reverse switch", () => {
   });
 });
 
-describe("resolvePermissionMode — TTY confirm + ack gate", () => {
-  it("TTY yolo with no ack needs confirmation", () => {
+describe("resolvePermissionMode — yolo starts with no confirmation", () => {
+  it("TTY yolo never needs confirmation (always warns instead)", () => {
     expect(resolvePermissionMode({}, {}, TTY)).toEqual({
       mode: "yolo",
-      needConfirm: true,
-      warnUnattended: false,
-    });
-  });
-
-  it("TTY yolo WITH a valid ack does not re-prompt", () => {
-    expect(resolvePermissionMode({}, {}, TTY_ACKED)).toEqual({
-      mode: "yolo",
       needConfirm: false,
-      warnUnattended: false,
+      warnUnattended: true,
     });
   });
-});
 
-describe("resolvePermissionMode — non-TTY unattended", () => {
   it("non-TTY yolo starts directly and flags an unattended warning, no confirm", () => {
     expect(resolvePermissionMode({}, {}, NONTTY)).toEqual({
       mode: "yolo",
@@ -78,37 +63,10 @@ describe("resolvePermissionMode — non-TTY unattended", () => {
   });
 });
 
-describe("hasValidAck", () => {
-  it("treats a non-empty string timestamp as valid", () => {
-    expect(hasValidAck("2026-06-21T11:00:00.000Z")).toBe(true);
-  });
-  it("treats absent/blank/non-string as invalid", () => {
-    expect(hasValidAck(undefined)).toBe(false);
-    expect(hasValidAck(null)).toBe(false);
-    expect(hasValidAck("")).toBe(false);
-    expect(hasValidAck("   ")).toBe(false);
-    expect(hasValidAck(12345)).toBe(false);
-  });
-});
-
-describe("isAffirmative", () => {
-  it("only y / yes (case- and space-insensitive) confirm", () => {
-    for (const yes of ["y", "Y", "yes", "YES", " yes "]) expect(isAffirmative(yes)).toBe(true);
-  });
-  it("everything else (incl. empty / Enter) declines", () => {
-    for (const no of ["", " ", "n", "no", "nope", "sure", "yolo", undefined]) {
-      expect(isAffirmative(no)).toBe(false);
-    }
-  });
-});
-
-describe("yoloWarningLine + prompt copy", () => {
-  it("warning names --chorus-only as the reclaim switch and flags yolo", () => {
+describe("yoloWarningLine", () => {
+  it("warning names --chorus-only as the opt-out switch and flags yolo", () => {
     const w = yoloWarningLine();
     expect(w).toContain("--chorus-only");
     expect(w.toUpperCase()).toContain("YOLO");
-  });
-  it("confirm prompt asks y/N", () => {
-    expect(YOLO_CONFIRM_PROMPT).toMatch(/\[y\/N\]/);
   });
 });

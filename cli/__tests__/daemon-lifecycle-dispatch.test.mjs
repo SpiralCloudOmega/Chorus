@@ -87,10 +87,8 @@ describe("runDaemon — lifecycle action dispatch", () => {
 });
 
 describe("runDaemon — -d detach ordering", () => {
-  it("runs preflight (yolo confirm) in the foreground BEFORE detaching", async () => {
+  it("runs preflight (credential validation) in the foreground BEFORE detaching", async () => {
     const calls = [];
-    const ask = vi.fn(async () => { calls.push("prompt"); return "y"; });
-    const recordYoloAck = vi.fn();
     const lifecycle = fakeLifecycle({
       startBackground: vi.fn(() => { calls.push("detach"); return { started: true, pid: 55, logFile: "/l", pidFile: "/p" }; }),
     });
@@ -99,10 +97,7 @@ describe("runDaemon — -d detach ordering", () => {
       {
         isTTY: true,
         resolve: () => ({ url: "u", apiKey: "cho_x", source: "env" }),
-        validate: async () => ({ uuid: "a", name: "Bot" }),
-        readYoloAck: () => null, // force the yolo confirm
-        recordYoloAck,
-        prompt: ask,
+        validate: async () => { calls.push("preflight"); return { uuid: "a", name: "Bot" }; },
         lifecycle,
         log: () => {},
         errLog: () => {},
@@ -110,30 +105,28 @@ describe("runDaemon — -d detach ordering", () => {
       }
     );
     expect(code).toBe(0);
-    // Prompt happened, ack recorded, and the prompt came BEFORE the detach spawn.
-    expect(recordYoloAck).toHaveBeenCalledOnce();
-    expect(calls).toEqual(["prompt", "detach"]);
+    // Preflight (credential validation) ran BEFORE the detach spawn.
+    expect(calls).toEqual(["preflight", "detach"]);
   });
 
-  it("a declined yolo confirm aborts WITHOUT detaching", async () => {
+  it("a failed preflight (credential validation) aborts WITHOUT detaching", async () => {
     const lifecycle = fakeLifecycle();
+    const errs = [];
     const code = await runDaemon(
       { detach: true },
       {
         isTTY: true,
         resolve: () => ({ url: "u", apiKey: "cho_x", source: "env" }),
-        validate: async () => ({ uuid: "a", name: "Bot" }),
-        readYoloAck: () => null,
-        recordYoloAck: vi.fn(),
-        prompt: async () => "n",
+        validate: async () => { throw new Error("bad key"); },
         lifecycle,
         log: () => {},
-        errLog: () => {},
+        errLog: (m) => errs.push(m),
         env: {},
       }
     );
     expect(code).toBe(1);
     expect(lifecycle.startBackground).not.toHaveBeenCalled();
+    expect(errs.join("")).toMatch(/validation failed/);
   });
 
   it("refuses to detach when a daemon is already running", async () => {
@@ -158,7 +151,6 @@ describe("runDaemon — -d detach ordering", () => {
         env: { [DETACHED_ENV]: "1" },
         resolve: () => ({ url: "u", apiKey: "cho_x", source: "env" }),
         validate: async () => ({ uuid: "a", name: "Bot" }),
-        readYoloAck: () => "2026-01-01T00:00:00.000Z",
         build,
         lifecycle,
         waitForever: async () => {},

@@ -1,7 +1,9 @@
 // cli/__tests__/daemon-permission-wiring.test.mjs
-// Covers the runDaemon wiring of daemon-permission-mode: TTY confirm (yes/no),
-// ack-skips-prompt, non-TTY warn-only, and the permissionMode threaded into
-// build(). Also covers recordYoloAck (preserve creds) and login clearing the ack.
+// Covers the runDaemon wiring of daemon-permission-mode: default yolo (no
+// confirmation, always warns), --chorus-only restricted, and the permissionMode
+// threaded into build(). Also covers recordYoloAck (preserve creds) and login
+// clearing the ack — those helpers still exist even though the daemon path no
+// longer prompts/persists an ack.
 import { describe, it, expect, vi } from "vitest";
 import { runDaemon } from "../daemon.mjs";
 import { recordYoloAck, writeLoginFile } from "../login.mjs";
@@ -15,9 +17,6 @@ function baseDeps(over = {}) {
     log: () => {},
     errLog: () => {},
     waitForever: async () => {},
-    readYoloAck: () => null,
-    recordYoloAck: vi.fn(),
-    nowIso: () => "2026-06-21T12:00:00.000Z",
     ...over,
   };
 }
@@ -52,57 +51,21 @@ describe("runDaemon — default yolo posture threading", () => {
   });
 });
 
-describe("runDaemon — TTY confirm gate", () => {
-  it("TTY no-ack prompts y/N; 'y' persists ack, warns, and starts yolo", async () => {
-    const recordAck = vi.fn();
-    const askPrompt = vi.fn(async () => "y");
-    const build = vi.fn(() => ({ async start() {}, async stop() {} }));
-    const code = await runDaemon(
-      {},
-      baseDeps({ isTTY: true, readYoloAck: () => null, recordYoloAck: recordAck, prompt: askPrompt, build })
-    );
-    expect(code).toBe(0);
-    expect(askPrompt).toHaveBeenCalledOnce();
-    expect(recordAck).toHaveBeenCalledWith("2026-06-21T12:00:00.000Z");
-    expect(build.mock.calls[0][1].permissionMode).toBe("yolo");
-  });
-
-  it("TTY no-ack with a declined prompt aborts (code 1), no ack, no build", async () => {
-    const recordAck = vi.fn();
-    const build = vi.fn(() => ({ async start() {}, async stop() {} }));
+describe("runDaemon — TTY yolo starts without confirmation", () => {
+  it("TTY default start runs yolo, warns, never prompts, build gets permissionMode:yolo", async () => {
     const errs = [];
-    const code = await runDaemon(
-      {},
-      baseDeps({
-        isTTY: true,
-        readYoloAck: () => null,
-        recordYoloAck: recordAck,
-        prompt: async () => "n",
-        build,
-        errLog: (m) => errs.push(m),
-      })
-    );
-    expect(code).toBe(1);
-    expect(recordAck).not.toHaveBeenCalled();
-    expect(build).not.toHaveBeenCalled();
-    expect(errs.join("")).toContain("--chorus-only");
-  });
-
-  it("TTY WITH a valid recorded ack does not prompt and starts yolo", async () => {
     const askPrompt = vi.fn();
     const build = vi.fn(() => ({ async start() {}, async stop() {} }));
     const code = await runDaemon(
       {},
-      baseDeps({
-        isTTY: true,
-        readYoloAck: () => "2026-06-20T00:00:00.000Z",
-        prompt: askPrompt,
-        build,
-      })
+      baseDeps({ isTTY: true, prompt: askPrompt, build, errLog: (m) => errs.push(m) })
     );
     expect(code).toBe(0);
     expect(askPrompt).not.toHaveBeenCalled();
     expect(build.mock.calls[0][1].permissionMode).toBe("yolo");
+    const warnings = errs.filter((m) => m.includes("YOLO"));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("--chorus-only");
   });
 });
 
