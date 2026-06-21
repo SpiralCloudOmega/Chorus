@@ -12,14 +12,11 @@
 // NOT done here — the no-op UploadHooks reserve those seams for the derived
 // observability idea.
 
-import { resolveCredentials, readYoloAck } from "./credentials.mjs";
-import { prompt, recordYoloAck, writeLoginFile } from "./login.mjs";
+import { resolveCredentials } from "./credentials.mjs";
+import { prompt, writeLoginFile } from "./login.mjs";
 import {
   resolvePermissionMode,
-  hasValidAck,
-  isAffirmative,
   yoloWarningLine,
-  YOLO_CONFIRM_PROMPT,
 } from "./daemon-permission-mode.mjs";
 import { resolveAgentType } from "./daemon-agent.mjs";
 import { formatBanner } from "./daemon-banner.mjs";
@@ -321,9 +318,6 @@ export async function runDaemon(flags = {}, deps = {}) {
   const isTTY = deps.isTTY ?? Boolean(process.stdin.isTTY);
   const askPrompt = deps.prompt ?? prompt;
   const writeCreds = deps.writeLoginFile ?? writeLoginFile;
-  const readAck = deps.readYoloAck ?? readYoloAck;
-  const recordAck = deps.recordYoloAck ?? recordYoloAck;
-  const nowIso = deps.nowIso ?? (() => new Date().toISOString());
   const version = deps.version ?? readVersion();
   const findClaude = deps.resolveClaudePath ?? resolveClaudePath;
   const verbose = flags.verbose === true || env.CHORUS_VERBOSE === "1";
@@ -344,7 +338,7 @@ export async function runDaemon(flags = {}, deps = {}) {
   // The preflight dep bundle — built from the same seams runDaemon resolved, so
   // the detach/restart paths run the SAME (injectable) preflight, not the real
   // implementations. Threaded into startDetached so tests can drive it offline.
-  const pfDeps = { flags, env, isTTY, resolve, validate, writeCreds, askPrompt, readAck, recordAck, nowIso, log, errLog };
+  const pfDeps = { flags, env, isTTY, resolve, validate, writeCreds, askPrompt, log, errLog };
 
   const action = flags.action ?? "run";
   if (action !== "run") {
@@ -435,7 +429,7 @@ export async function runDaemon(flags = {}, deps = {}) {
  * @returns {Promise<number | { creds: any, identity: any, permissionMode: "yolo"|"chorus" }>}
  */
 export async function preflight(ctx) {
-  const { flags, env, isTTY, resolve, validate, writeCreds, askPrompt, readAck, recordAck, nowIso, log, errLog } = ctx;
+  const { flags, env, isTTY, resolve, validate, writeCreds, askPrompt, log, errLog } = ctx;
 
   let creds;
   // `identity` may be pre-filled by interactive completion (it validates as part
@@ -483,24 +477,8 @@ export async function preflight(ctx) {
   }
   log(`[Chorus] authenticated as ${identity.name} (${identity.uuid})`);
 
-  // Permission posture: default yolo, gated by a one-time TTY confirmation
-  // remembered as yoloAckAt. --chorus-only reclaims the restricted posture.
-  const decision = resolvePermissionMode(flags, env, { isTTY, hasAck: hasValidAck(readAck()) });
-  if (decision.mode === "yolo" && decision.needConfirm) {
-    const answer = await askPrompt(YOLO_CONFIRM_PROMPT);
-    if (!isAffirmative(answer)) {
-      errLog(
-        "[Chorus] YOLO not confirmed — not starting. Re-run and confirm, or use " +
-          "--chorus-only to start in the restricted (Chorus-tools-only) posture."
-      );
-      return 1;
-    }
-    try {
-      recordAck(nowIso());
-    } catch (err) {
-      errLog(`[Chorus] warning: could not persist YOLO acknowledgement: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
+  // Permission posture: default yolo. --chorus-only reclaims the restricted posture.
+  const decision = resolvePermissionMode(flags, env, { isTTY, hasAck: false });
 
   return { creds, identity, permissionMode: decision.mode };
 }
