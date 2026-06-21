@@ -93,7 +93,9 @@ DATABASE_URL=postgresql://user:pass@host:5432/chorus chorus
 
 ### `chorus daemon` — 作为 Agent 运行时连接
 
-`chorus daemon` 将你的本地机器作为 Agent 运行时连接到远程 Chorus 服务器。它会自动检测 PATH 中可用的 Agent CLI（如 `claude`、`codex`、`copilot`），并执行 Chorus 分配的任务。
+`chorus daemon` 将你的本地机器作为 Agent 运行时连接到远程 Chorus 服务器并执行 Chorus 分配的任务。
+
+> **当前版本：** 仅支持 **Claude Code**。对其他 Agent CLI（Codex、Copilot 等）的支持计划在未来版本中实现。
 
 ```bash
 chorus login                     # 认证（打开浏览器）
@@ -107,10 +109,10 @@ chorus daemon logs               # 查看 daemon 日志
 
 **主要特性：**
 
-- **自动检测** — 自动发现 PATH 中可用的 Agent CLI
+- **Claude Code 集成** — 自动检测 PATH 中的 `claude` CLI
 - **后台模式** — 使用 `-d` 标志后台运行；用 `stop/restart/logs` 管理
 - **权限模式** — 默认完全访问（yolo）；使用 `--chorus-only` 限制为仅 Chorus MCP 工具
-- **Agent 选择** — 使用 `--agent claude-code` 指定使用哪个 Agent 后端（默认：`claude-code`）
+- **交互式设置** — 首次启动时如未配置凭证会提示输入
 
 daemon 需要先认证。首次使用请先运行 `chorus login`，或者 daemon 会在首次启动时交互式提示输入凭证（如果在终端中运行）。
 
