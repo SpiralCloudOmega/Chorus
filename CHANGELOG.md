@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.11.0] - 2026-06-21
+
+### Added
+- **Chorus Daemon — run your local Claude Code as a Chorus agent**: A new `chorus daemon` CLI client mode (plus `chorus login`) authenticates as an agent, subscribes to the notification SSE stream, and on each wake (task assigned / @mention / elaboration / human instruction) spawns a local headless `claude -p` wired to the Chorus MCP server. No new npm deps (headless subprocess, not the Agent SDK; cross-platform). Sessions are deterministically anchored on the dispatched entity's **direct idea uuid** — humans can take over any run with `claude --resume <idea-uuid>`, and a WakeQueue serializes per-anchor so two wakes never resume the same session at once. A headless guard forbids `AskUserQuestion` and routes human-decision points back to Chorus. Ships with TTY credential completion, default-yolo posture (`--chorus-only` for restricted), a startup banner, per-wake lifecycle logs, and `-d` detached background mode (stop/status/restart/logs). (#317, #318, #325, #341, + CLI UX follow-ups)
+- **Agent Connections — live daemon observability + control**: A sidebar presence pill → popover → "View all" chat modal for watching and steering daemon agents, backed by a DB-backed, cross-instance `DaemonConnection` registry (self-reported clientType/host/version, generation-fenced liveness) and a persistent per-connection `DaemonExecution` state (running/queued, `execution:{connectionUuid}` SSE channel, deep links). Each session is a persistent conversation: every wake is a turn on a `DaemonSession` with live transcript relay (message-level pagination), continuation pinned to the origin connection. Humans can **inject free-text instructions** (origin-only precise delivery) and **interrupt / resume** a running run via a server→daemon reverse control channel (sticky interrupted status, two-stage process-tree kill). Ad-hoc conversations are first-class. Empty states carry a `npx @chorus-aidlc/chorus daemon` connect CTA. (#319, #320, #322–#327, #330–#337, #342, #343)
+- **Verify Elaborate button wakes the daemon PM agent**: A human-clickable "Verify Elaborate" resolves an Idea's elaboration from the UI and wakes the assigned daemon PM agent to write the proposal — closing the Reversed Conversation loop. New user-side `elaboration_verified` wake, distinct from the unchanged agent-only `chorus_pm_validate_elaboration`. (#335)
+- **Agent online presence in the @-mention dropdown**: Each agent candidate shows a green presence dot and a status line ("N active" / "Idle"), sourced from the daemon-connection registry, owner-scoped and batched. (#324)
+
+### Changed
+- **Daemon defaults to full-autonomy (yolo) mode**: The `chorus daemon` posture defaults to yolo with a prominent banner warning instead of an interactive confirmation; `--chorus-only` (or `CHORUS_CHORUS_ONLY=1`) reclaims the restricted `mcp__chorus__*`-only posture. (de5f4db)
+- **README CLI & Daemon usage guide**: New Quick Start section documenting daemon setup (currently Claude Code only).
+
+### Fixed
+- **Dashboard idea panel out of sync on soft navigation**: Notification / SSE-toast / search / presence idea links changed the URL but never opened or switched the detail panel. Selection now derives from `useSearchParams()` with the SSR seed gated to first render, so deep-linking and closing a deep-linked panel both behave. (#340)
+- **Lineage UI scroll/overflow defects**: Fixed the set-parent picker's non-scrolling candidate list and long-title overflow across picker rows, breadcrumb, and grid-item wrappers. (#339)
+- **Daemon chat modal display**: Mobile now fills the viewport edge-to-edge (input pinned to bottom), and wide markdown blocks (tables/code/URLs) are contained instead of overflowing horizontally. (#336)
+
+### Plugin
+- **OpenClaw plugin → bidirectional daemon parity**: The OpenClaw plugin now implements the same bidirectional daemon protocol as the `chorus` CLI host, re-mapped to the in-process `runEmbeddedAgent` host — shared pure-REST daemon client, reverse control channel (interrupt/resume/deliver_turn), turn-advance + execution-state + streaming transcript reporting, real mid-run interrupt via AbortController, and pending-turns backfill. The real OpenClaw SDK surface is now typed. (#338)
+- **All plugin packages → 0.11.0**: Lockstep bump across Claude Code (marketplace.json + plugin.json), Codex (plugin.json + `chorus-mcp-call.sh` clientInfo), OpenClaw (package.json), every skill `SKILL.md` on all four surfaces, and the standalone `public/skill/` distribution.
+
+---
+
 ## [0.10.0] - 2026-06-14
 
 ### Added
