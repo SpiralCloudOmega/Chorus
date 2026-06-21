@@ -27,6 +27,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近更新
 
+**[v0.11.0](https://chorus-ai.dev/zh/blog/chorus-v0.11.0-release/)** — Chorus Daemon：`chorus daemon` 将本机变为常驻 Agent 运行时，在每次派发时唤起本地 Claude Code。Agent Connections 界面提供实时可观测与控制：流式 transcript、指令注入、打断 / 恢复；新增"完成细化"按钮，唤起被指派的 Agent 撰写提案。
+
 **[v0.10.0](https://chorus-ai.dev/zh/blog/chorus-v0.10.0-release/)** — 单父想法血缘：一条想法可派生子想法或挂靠至另一条之下，构成森林结构。该关联为弱关联，父想法仅呈现只读的 "+N derived" 汇总，不约束子想法的细化、提案与任务流程。想法浏览统一收敛至 Dashboard（Ideas / Lineage / Stats 三档视图切换，支持自适应默认）；独立的 Idea List 页面下线，原 URL 经 308 重定向至 Dashboard。
 
 **[v0.9.4](https://chorus-ai.dev/zh/blog/chorus-v0.9.4-release/)** — OpenClaw 插件基于 OpenClaw 2026.4.27 Plugin SDK 全面重写（原生 MCP 注册、`runEmbeddedAgent` 处理 SSE 唤醒、reviewer 改为原生 skill）；Codex 插件 hook 改为随插件包分发，安装器同时清理用户目录中的历史 hook 拷贝。
