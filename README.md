@@ -100,6 +100,29 @@ DATABASE_URL=postgresql://user:pass@host:5432/chorus chorus
 | **Docker (full stack)** | [`docker compose up`](#quick-start-with-docker-recommended) (PostgreSQL + Redis + Chorus) |
 | **AWS CDK** | [Deploy to AWS](#deploy-to-aws) |
 
+### `chorus daemon` — Connect as Agent Runtime
+
+The `chorus daemon` connects your local machine to a remote Chorus server as an agent runtime. It auto-detects agent CLIs on your PATH (e.g., `claude`, `codex`, `copilot`) and executes tasks assigned by Chorus.
+
+```bash
+chorus login                     # Authenticate (opens browser)
+chorus daemon                    # Start daemon in foreground
+chorus daemon -d                 # Start daemon in background (detached)
+chorus daemon stop               # Stop background daemon
+chorus daemon status             # Check daemon status
+chorus daemon restart            # Restart background daemon
+chorus daemon logs               # View daemon logs
+```
+
+**Key features:**
+
+- **Auto-detection** — Discovers agent CLIs on your PATH automatically
+- **Background mode** — Run with `-d` flag; manage with `stop/restart/logs`
+- **Permission modes** — Default is full access (yolo); use `--chorus-only` to restrict to Chorus MCP tools only
+- **Agent selection** — Use `--agent claude-code` to specify which agent backend to use (default: `claude-code`)
+
+The daemon requires authentication. Run `chorus login` first, or it will prompt for credentials interactively on first start (if running in a terminal).
+
 ---
 
 ## Screenshots
@@ -316,46 +339,6 @@ If you'd rather read the full docs:
 Create API Keys in the Web UI under **Settings → Agents → Create API Key**. Keys start with `cho_` and are shown only once.
 
 ![Create API Key](docs/images/create-key.png)
-
----
-
-## CLI & Daemon
-
-### `chorus` CLI
-
-The `chorus` CLI runs the Chorus server locally.
-
-```bash
-npm install -g @chorus-aidlc/chorus
-chorus                           # Start server on http://localhost:8637
-chorus --port 3000               # Custom port
-chorus --data-dir /path/to/data  # Custom data directory
-```
-
-### `chorus daemon`
-
-The `chorus daemon` connects your local machine to a remote Chorus server as an agent runtime. It auto-detects agent CLIs on your PATH (e.g., `claude`, `codex`, `copilot`) and executes tasks assigned by Chorus.
-
-**Basic usage:**
-
-```bash
-chorus login                     # Authenticate (opens browser)
-chorus daemon                    # Start daemon in foreground
-chorus daemon -d                 # Start daemon in background (detached)
-chorus daemon stop               # Stop background daemon
-chorus daemon status             # Check daemon status
-chorus daemon restart            # Restart background daemon
-chorus daemon logs               # View daemon logs
-```
-
-**Key features:**
-
-- **Auto-detection** — Discovers agent CLIs on your PATH automatically
-- **Background mode** — Run with `-d` flag; manage with `stop/restart/logs`
-- **Permission modes** — Default is full access (yolo); use `--chorus-only` to restrict to Chorus MCP tools only
-- **Agent selection** — Use `--agent claude-code` to specify which agent backend to use (default: `claude-code`)
-
-The daemon requires authentication. Run `chorus login` first, or it will prompt for credentials interactively on first start (if running in a terminal).
 
 ---
 

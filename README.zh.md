@@ -91,6 +91,29 @@ DATABASE_URL=postgresql://user:pass@host:5432/chorus chorus
 | **Docker（完整版）** | [`docker compose up`](#docker-一键启动推荐)（PostgreSQL + Redis + Chorus） |
 | **AWS CDK** | [部署到 AWS](#部署到-aws) |
 
+### `chorus daemon` — 作为 Agent 运行时连接
+
+`chorus daemon` 将你的本地机器作为 Agent 运行时连接到远程 Chorus 服务器。它会自动检测 PATH 中可用的 Agent CLI（如 `claude`、`codex`、`copilot`），并执行 Chorus 分配的任务。
+
+```bash
+chorus login                     # 认证（打开浏览器）
+chorus daemon                    # 前台启动 daemon
+chorus daemon -d                 # 后台启动 daemon（分离模式）
+chorus daemon stop               # 停止后台 daemon
+chorus daemon status             # 查看 daemon 状态
+chorus daemon restart            # 重启后台 daemon
+chorus daemon logs               # 查看 daemon 日志
+```
+
+**主要特性：**
+
+- **自动检测** — 自动发现 PATH 中可用的 Agent CLI
+- **后台模式** — 使用 `-d` 标志后台运行；用 `stop/restart/logs` 管理
+- **权限模式** — 默认完全访问（yolo）；使用 `--chorus-only` 限制为仅 Chorus MCP 工具
+- **Agent 选择** — 使用 `--agent claude-code` 指定使用哪个 Agent 后端（默认：`claude-code`）
+
+daemon 需要先认证。首次使用请先运行 `chorus login`，或者 daemon 会在首次启动时交互式提示输入凭证（如果在终端中运行）。
+
 ---
 
 ## 界面预览
@@ -307,46 +330,6 @@ PGlite 在端口 5433 运行嵌入式 PostgreSQL。数据存储在 `.pglite/`，
 在 Web UI 的 **Settings → Agents → Create API Key** 创建 API Key。Key 以 `cho_` 开头，仅在创建时显示一次。
 
 ![Create API Key](docs/images/create-key.png)
-
----
-
-## CLI 与 Daemon
-
-### `chorus` CLI
-
-`chorus` CLI 用于在本地运行 Chorus 服务器。
-
-```bash
-npm install -g @chorus-aidlc/chorus
-chorus                           # 启动服务器，地址 http://localhost:8637
-chorus --port 3000               # 自定义端口
-chorus --data-dir /path/to/data  # 自定义数据目录
-```
-
-### `chorus daemon`
-
-`chorus daemon` 将你的本地机器作为 Agent 运行时连接到远程 Chorus 服务器。它会自动检测 PATH 中可用的 Agent CLI（如 `claude`、`codex`、`copilot`），并执行 Chorus 分配的任务。
-
-**基本用法：**
-
-```bash
-chorus login                     # 认证（打开浏览器）
-chorus daemon                    # 前台启动 daemon
-chorus daemon -d                 # 后台启动 daemon（分离模式）
-chorus daemon stop               # 停止后台 daemon
-chorus daemon status             # 查看 daemon 状态
-chorus daemon restart            # 重启后台 daemon
-chorus daemon logs               # 查看 daemon 日志
-```
-
-**主要特性：**
-
-- **自动检测** — 自动发现 PATH 中可用的 Agent CLI
-- **后台模式** — 使用 `-d` 标志后台运行；用 `stop/restart/logs` 管理
-- **权限模式** — 默认完全访问（yolo）；使用 `--chorus-only` 限制为仅 Chorus MCP 工具
-- **Agent 选择** — 使用 `--agent claude-code` 指定使用哪个 Agent 后端（默认：`claude-code`）
-
-daemon 需要先认证。首次使用请先运行 `chorus login`，或者 daemon 会在首次启动时交互式提示输入凭证（如果在终端中运行）。
 
 ---
 
