@@ -50,6 +50,10 @@ export class Waker {
     this.creds = opts.creds;
     this.lineage = opts.lineage;
     this.spawner = opts.spawner;
+    // Verbose per-wake logging (daemon-startup-output). Default: one compact
+    // line per lifecycle event (arrival / spawn new-vs-resume / completion).
+    // When true, additional detail is emitted alongside those lines.
+    this.verbose = opts.verbose ?? false;
     // The daemon spawns in one fixed working directory; the transcript probe must
     // use the SAME cwd as the spawn, or it would decide new-vs-resume against the
     // wrong directory (claude scopes --resume to cwd).
@@ -250,12 +254,19 @@ export class Waker {
     // is reported in the snapshot; the DIRECT idea is the preferred session anchor.
     const rootIdeaUuid = attribution?.rootIdeaUuid ?? null;
     const directIdeaUuid = attribution?.directIdeaUuid ?? null;
+    // Per-wake lifecycle logging: stamp the start so completion can report a
+    // duration. `Date.now()` is fine here (runtime metric, not a resume seed).
+    const startMs = Date.now();
+    const target = entity ? `${entity.entityType}:${entity.entityUuid}` : key;
     try {
       const prompt = buildPrompt(notification);
       if (!prompt) {
         this.logger.info(`[Chorus] no wake prompt for action "${notification.action}" — skipping`);
         return;
       }
+
+      // Lifecycle line 1 — arrival: which action targets which idea/task/entity.
+      this.logger.info(`[Chorus] ▶ wake: ${notification.action} → ${target}`);
 
       // Transition this resource to RUNNING with a start timestamp and emit a
       // fresh snapshot, so the server/UI sees it leave the queue and begin
@@ -285,6 +296,18 @@ export class Waker {
       // spawning, so a garbage id surfaces visibly rather than misanchoring.
       const sessionId = directIdeaUuid ?? notification.entityUuid ?? null;
       const isNew = sessionId ? this.isNewSessionFn(sessionId, this.cwd) : true;
+
+      // Lifecycle line 2 — spawn: new vs resume, plus the (otherwise hidden)
+      // `claude --resume <id>` takeover hint so an operator can attach to the
+      // session from this daemon's working directory.
+      this.logger.info(
+        `[Chorus] ${isNew ? "spawning new" : "resuming"} session ${sessionId ?? "(none)"}` +
+          (sessionId ? ` — take over with: claude --resume ${sessionId}` : "")
+      );
+      if (this.verbose) {
+        this.logger.info(`[Chorus]   cwd=${this.cwd} action=${notification.action} root=${rootIdeaUuid ?? "(none)"}`);
+      }
+
       cfg = this.writeMcpConfigFn(this.creds);
 
       await this.hooks?.onSessionStart?.({ rootIdeaKey: key, sessionId: sessionId ?? "", isNew });
@@ -376,10 +399,16 @@ export class Waker {
         }
       }
 
+      // Lifecycle line 3 — completion: duration + exit code, one compact line.
+      const durationMs = Date.now() - startMs;
       this.logger.info(
-        `[Chorus] wake complete for ${key} (action=${notification.action}, ` +
-          `session=${result?.sessionId}, exit=${result?.exitCode})`
+        `[Chorus] ✓ wake done: ${target} (exit=${result?.exitCode ?? "?"}, ${durationMs}ms)`
       );
+      if (this.verbose) {
+        this.logger.info(
+          `[Chorus]   action=${notification.action} session=${result?.sessionId} key=${key}`
+        );
+      }
     } catch (err) {
       this.logger.warn(`[Chorus] wake failed for ${key}: ${err}`);
     } finally {

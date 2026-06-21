@@ -54,6 +54,23 @@ function nonEmpty(value) {
 }
 
 /**
+ * Read the recorded yolo acknowledgement (`yoloAckAt`) from the login file, if
+ * present. Returns the ISO-8601 string, or null when the file is absent /
+ * unreadable / carries no ack. Never throws (a missing ack just means "not yet
+ * confirmed"). The ack lives in the same `~/.chorus/daemon.json` as the
+ * credentials — there is no separate ack file (daemon-permission-mode spec).
+ *
+ * @param {{ readJson?: (p: string) => (Record<string, unknown>|null), loginPath?: string }} [deps]
+ * @returns {string | null}
+ */
+export function readYoloAck(deps = {}) {
+  const readJson = deps.readJson ?? readJsonSafe;
+  const loginPath = deps.loginPath ?? loginFilePath();
+  const file = readJson(loginPath);
+  return file ? nonEmpty(file.yoloAckAt) ?? null : null;
+}
+
+/**
  * @typedef {Object} ResolvedCredentials
  * @property {string} url
  * @property {string} apiKey

@@ -12,7 +12,17 @@
 // NOT done here — the no-op UploadHooks reserve those seams for the derived
 // observability idea.
 
-import { resolveCredentials } from "./credentials.mjs";
+import { resolveCredentials, readYoloAck } from "./credentials.mjs";
+import { prompt, recordYoloAck, writeLoginFile } from "./login.mjs";
+import {
+  resolvePermissionMode,
+  hasValidAck,
+  isAffirmative,
+  yoloWarningLine,
+  YOLO_CONFIRM_PROMPT,
+} from "./daemon-permission-mode.mjs";
+import { resolveAgentType } from "./daemon-agent.mjs";
+import { formatBanner } from "./daemon-banner.mjs";
 import { ChorusClient, validateAndFetchIdentity } from "./chorus-client.mjs";
 import { SseListener } from "./sse-listener.mjs";
 import { createBackfill } from "./backfill.mjs";
@@ -31,6 +41,28 @@ import { createInterruptReporter } from "./interrupt-reporter.mjs";
 import { createTurnReporter } from "./turn-reporter.mjs";
 import { createControlHandler } from "./control-handler.mjs";
 import { resolveSigintTimeoutMs } from "./daemon-config.mjs";
+import {
+  startBackground,
+  stopDaemon,
+  isRunning,
+  readLog,
+} from "./daemon-lifecycle.mjs";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+/** Env marker set on the detached child so it skips the interactive preflight. */
+export const DETACHED_ENV = "CHORUS_DAEMON_DETACHED";
+
+/** Read the chorus CLI version from package.json (best-effort; "?" on failure). */
+function readVersion() {
+  try {
+    const root = dirname(dirname(fileURLToPath(import.meta.url)));
+    return JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version ?? "?";
+  } catch {
+    return "?";
+  }
+}
 
 function defaultLogger() {
   return {
@@ -65,6 +97,10 @@ function defaultLogger() {
 export function buildDaemon(creds, deps = {}) {
   const logger = deps.logger ?? defaultLogger();
   const permissionMode = deps.permissionMode ?? "chorus";
+  // Per-wake verbose logging (daemon-startup-output), threaded into the Waker.
+  // agentType is currently display-only (banner/logs) — the spawn path is
+  // claude-code regardless (daemon-agent-selection reserves the slot only).
+  const verbose = deps.verbose ?? false;
   // Escalation window for the interrupt killer (子3). Pre-resolved by runDaemon via
   // the layered resolver; falls back to the resolver's default here when not given,
   // so a daemon built directly (integration tests) still gets a sane value.
@@ -157,7 +193,7 @@ export function buildDaemon(creds, deps = {}) {
   const seen = new Set();
   // cwd: the daemon spawns all wakes in one working directory; the waker uses it
   // BOTH to probe the transcript (new-vs-resume) and to spawn, so they never diverge.
-  waker = new Waker({ creds, lineage, spawner, cwd: deps.cwd ?? process.cwd(), hooks, logger, reportInterrupt, advanceTurn });
+  waker = new Waker({ creds, lineage, spawner, cwd: deps.cwd ?? process.cwd(), hooks, logger, reportInterrupt, advanceTurn, verbose });
   const router = new EventRouter({ mcpClient, waker, queue, wakeActions: WAKE_ACTIONS, seen, logger });
 
   // Reverse control channel (子3): the control handler verifies a control event
@@ -280,57 +316,95 @@ export async function runDaemon(flags = {}, deps = {}) {
   const log = deps.log ?? ((m) => process.stdout.write(`${m}\n`));
   const errLog = deps.errLog ?? ((m) => process.stderr.write(`${m}\n`));
   const env = deps.env ?? process.env;
+  // TTY detection + IO seams (injectable for tests). Default to the real stdin
+  // TTY flag and the real prompt / ack helpers.
+  const isTTY = deps.isTTY ?? Boolean(process.stdin.isTTY);
+  const askPrompt = deps.prompt ?? prompt;
+  const writeCreds = deps.writeLoginFile ?? writeLoginFile;
+  const readAck = deps.readYoloAck ?? readYoloAck;
+  const recordAck = deps.recordYoloAck ?? recordYoloAck;
+  const nowIso = deps.nowIso ?? (() => new Date().toISOString());
+  const version = deps.version ?? readVersion();
+  const findClaude = deps.resolveClaudePath ?? resolveClaudePath;
+  const verbose = flags.verbose === true || env.CHORUS_VERBOSE === "1";
 
-  // --yolo flag or CHORUS_YOLO env → full autonomy; default → chorus-only.
-  const yolo = flags.yolo === true || env.CHORUS_YOLO === "1" || env.CHORUS_YOLO === "true";
-  const permissionMode = yolo ? "yolo" : "chorus";
+  // Resolve the agent backend (default claude-code). An unknown --agent /
+  // CHORUS_AGENT is a hard error — no silent fallback (daemon-agent-selection).
+  const agentResult = resolveAgentType(flags, env);
+  if (!agentResult.ok) {
+    errLog(`[Chorus] ${agentResult.error}`);
+    return 1;
+  }
+  const agentType = agentResult.agent;
+
+  // Lifecycle subcommands (stop/status/restart/logs) operate on the pidfile/logfile
+  // managed by the `-d` path — they never start the long-lived foreground daemon.
+  // `run` falls through to the normal startup below. Injectable lifecycle for tests.
+  const lifecycle = deps.lifecycle ?? { startBackground, stopDaemon, isRunning, readLog };
+  // The preflight dep bundle — built from the same seams runDaemon resolved, so
+  // the detach/restart paths run the SAME (injectable) preflight, not the real
+  // implementations. Threaded into startDetached so tests can drive it offline.
+  const pfDeps = { flags, env, isTTY, resolve, validate, writeCreds, askPrompt, readAck, recordAck, nowIso, log, errLog };
+
+  const action = flags.action ?? "run";
+  if (action !== "run") {
+    return handleLifecycleAction(action, { flags, env, log, errLog, lifecycle, pfDeps });
+  }
+
+  // `-d` / --detach: complete any interactive preflight in THIS foreground process
+  // (which holds the TTY), then spawn the daemon detached and return. The detached
+  // child re-enters runDaemon with the DETACHED_ENV marker set, so it skips the
+  // preflight prompts. A child run (marker present) falls through to normal startup.
+  const isDetachedChild = env[DETACHED_ENV] === "1";
+  if (flags.detach && !isDetachedChild) {
+    return startDetached({ log, errLog, lifecycle, pfDeps });
+  }
 
   // SIGINT-escalation window for the interrupt killer (子3) — layered:
   //   --sigint-timeout flag > CHORUS_DAEMON_SIGINT_TIMEOUT env > ~/.chorus/daemon.json > 10000.
   const sigintTimeoutMs = resolveSigintTimeoutMs({ sigintTimeout: flags.sigintTimeout }, { env });
 
-  let creds;
-  try {
-    creds = resolve(flags);
-  } catch (err) {
-    errLog(err instanceof Error ? err.message : String(err));
-    return 1;
-  }
-  log(`[Chorus] credentials resolved from: ${creds.source}`);
+  // Foreground preflight: resolve/complete credentials + resolve the permission
+  // posture (confirming yolo on a TTY). Reuses the same pfDeps bundle the detach
+  // path uses. Returns a numeric exit code on failure, or
+  // { creds, identity, permissionMode } on success.
+  const pf = await preflight(pfDeps);
+  if (typeof pf === "number") return pf;
+  const { creds, identity, permissionMode } = pf;
 
-  // Validate + echo identity before opening the long-lived connection.
-  let identity;
-  try {
-    identity = await validate({ url: creds.url, apiKey: creds.apiKey });
-  } catch (err) {
-    errLog(`[Chorus] credential validation failed: ${err instanceof Error ? err.message : String(err)}`);
-    return 1;
-  }
-  log(`[Chorus] authenticated as ${identity.name} (${identity.uuid})`);
+  // Detect the claude executable (non-fatal): the daemon still subscribes when
+  // it's missing; a wake surfaces the error visibly when one arrives. The
+  // resolved path (or absence) is shown in the banner below.
+  const claudePath = findClaude();
 
-  // Make the permission posture loud — it determines what a woken Claude can do.
+  // Boxed startup banner — one screen replacing the scattered [Chorus] lines.
+  log(
+    formatBanner(
+      {
+        version,
+        url: creds.url,
+        agentName: identity.name,
+        agentUuid: identity.uuid,
+        permissionMode,
+        credentialSource: creds.source,
+        agentType,
+        claudePath,
+        connection: "connecting…",
+      },
+      { isTTY: isTTY && Boolean(process.stdout.isTTY) }
+    )
+  );
+  // The yolo posture is loud even when the banner scrolls past — keep the one-line
+  // ⚠ warning on stderr (it also names --chorus-only as the reclaim switch).
   if (permissionMode === "yolo") {
-    errLog(
-      "[Chorus] ⚠ PERMISSION MODE: YOLO (--dangerously-skip-permissions) — woken Claude has FULL " +
-        "autonomy: Bash, file writes, any command, under this daemon's API key. Run only in a " +
-        "trusted/sandboxed environment with people you trust to dispatch to it."
-    );
-  } else {
-    log(
-      "[Chorus] permission mode: chorus (default) — woken Claude may use Chorus MCP tools only " +
-        "(comment/claim/report/status), NOT Bash or file edits. Pass --yolo for full autonomy."
-    );
-  }
-
-  // Warn (don't fail) if claude isn't found — the daemon still subscribes; a
-  // wake will surface the missing-binary error visibly when one arrives.
-  if (!resolveClaudePath()) {
-    errLog("[Chorus] WARNING: `claude` not found on PATH — wakes will fail until it is installed.");
+    errLog(`[Chorus] ${yoloWarningLine()}`);
   }
 
   const daemon = build(creds, {
     logger: { info: log, warn: errLog, error: errLog },
     permissionMode,
+    agentType,
+    verbose,
     sigintTimeoutMs,
   });
 
@@ -348,5 +422,173 @@ export async function runDaemon(flags = {}, deps = {}) {
 
   // Keep the process alive for the long-lived SSE subscription.
   await (deps.waitForever ?? (() => new Promise(() => {})))();
+  return 0;
+}
+
+/**
+ * Foreground preflight shared by the normal and `-d` startup paths: resolve or
+ * interactively complete credentials, validate identity, and resolve the
+ * permission posture (confirming + persisting the yolo ack on a TTY). All the
+ * interactive IO lives here so it always runs in a real terminal before any
+ * detach. Returns a numeric exit code on failure, or
+ * { creds, identity, permissionMode } on success.
+ * @returns {Promise<number | { creds: any, identity: any, permissionMode: "yolo"|"chorus" }>}
+ */
+export async function preflight(ctx) {
+  const { flags, env, isTTY, resolve, validate, writeCreds, askPrompt, readAck, recordAck, nowIso, log, errLog } = ctx;
+
+  let creds;
+  // `identity` may be pre-filled by interactive completion (it validates as part
+  // of completing), so the main validate step is skipped when it's already set.
+  let identity = null;
+  try {
+    creds = resolve(flags);
+  } catch (err) {
+    // No resolvable credentials. On a TTY, complete them interactively (reusing
+    // the `chorus login` masked-prompt → validate → 0600 persist flow). On a
+    // non-TTY (systemd / nohup / CI / detached child), preserve the hard error +
+    // multi-source hint — never block on a prompt no one can answer.
+    if (!isTTY) {
+      errLog(err instanceof Error ? err.message : String(err));
+      return 1;
+    }
+    log("[Chorus] no credentials found — completing them interactively (saved for next time).");
+    let url = await askPrompt("Chorus URL: ");
+    let apiKey = await askPrompt("Chorus API key (cho_...): ", { mask: true });
+    url = (url || "").trim();
+    apiKey = (apiKey || "").trim();
+    if (!url || !apiKey) {
+      errLog("[Chorus] both a URL and an API key are required — aborting.");
+      return 1;
+    }
+    try {
+      identity = await validate({ url, apiKey });
+    } catch (verr) {
+      errLog(`[Chorus] credential validation failed: ${verr instanceof Error ? verr.message : String(verr)}`);
+      errLog("[Chorus] credentials were NOT saved.");
+      return 1;
+    }
+    writeCreds({ url, apiKey, agentUuid: identity.uuid, agentName: identity.name });
+    creds = { url, apiKey, source: "interactive" };
+  }
+  log(`[Chorus] credentials resolved from: ${creds.source}`);
+
+  if (!identity) {
+    try {
+      identity = await validate({ url: creds.url, apiKey: creds.apiKey });
+    } catch (err) {
+      errLog(`[Chorus] credential validation failed: ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    }
+  }
+  log(`[Chorus] authenticated as ${identity.name} (${identity.uuid})`);
+
+  // Permission posture: default yolo, gated by a one-time TTY confirmation
+  // remembered as yoloAckAt. --chorus-only reclaims the restricted posture.
+  const decision = resolvePermissionMode(flags, env, { isTTY, hasAck: hasValidAck(readAck()) });
+  if (decision.mode === "yolo" && decision.needConfirm) {
+    const answer = await askPrompt(YOLO_CONFIRM_PROMPT);
+    if (!isAffirmative(answer)) {
+      errLog(
+        "[Chorus] YOLO not confirmed — not starting. Re-run and confirm, or use " +
+          "--chorus-only to start in the restricted (Chorus-tools-only) posture."
+      );
+      return 1;
+    }
+    try {
+      recordAck(nowIso());
+    } catch (err) {
+      errLog(`[Chorus] warning: could not persist YOLO acknowledgement: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  return { creds, identity, permissionMode: decision.mode };
+}
+
+/**
+ * Dispatch a daemon lifecycle subcommand (stop/status/restart/logs) against the
+ * pidfile/logfile-managed background daemon. Each reports clearly when nothing
+ * is running (no silent failure). `restart` performs stop-then-detached-start.
+ * @returns {Promise<number>} exit code
+ */
+export async function handleLifecycleAction(action, { flags, env, log, errLog, lifecycle, pfDeps }) {
+  if (action === "status") {
+    const s = lifecycle.isRunning();
+    if (s.running) log(`[Chorus] daemon is running (pid ${s.pid}).`);
+    else if (s.stale) log(`[Chorus] daemon is NOT running (stale pidfile for pid ${s.pid}).`);
+    else log("[Chorus] daemon is not running.");
+    return 0;
+  }
+  if (action === "logs") {
+    const r = lifecycle.readLog();
+    if (!r.ok) {
+      errLog(`[Chorus] ${r.message}`);
+      return 1;
+    }
+    log(r.content);
+    return 0;
+  }
+  if (action === "stop") {
+    const r = lifecycle.stopDaemon();
+    (r.stopped ? log : errLog)(`[Chorus] ${r.message}`);
+    return r.stopped ? 0 : 1;
+  }
+  if (action === "restart") {
+    const r = lifecycle.stopDaemon();
+    log(`[Chorus] ${r.message}`);
+    // Start a fresh detached instance regardless of whether one was running.
+    return startDetached({ log, errLog, lifecycle, pfDeps, skipPreflight: true });
+  }
+  errLog(`[Chorus] unknown daemon action: ${action}`);
+  return 1;
+}
+
+/**
+ * `-d` / --detach: run the foreground preflight (in this TTY), then spawn the
+ * daemon detached (re-exec self without `-d`, with the DETACHED_ENV marker so
+ * the child skips the preflight), write the pidfile, and return. Refuses to
+ * double-start when a live daemon is already recorded.
+ *
+ * `skipPreflight` (used by restart) bypasses the interactive preflight — restart
+ * runs non-interactively against already-persisted credentials/ack.
+ * @returns {Promise<number>} exit code
+ */
+export async function startDetached(ctx) {
+  const { log, errLog, lifecycle, pfDeps, skipPreflight } = ctx;
+  const env = pfDeps.env ?? process.env;
+
+  // Refuse to double-start before doing any interactive work.
+  const status = lifecycle.isRunning();
+  if (status.running) {
+    errLog(`[Chorus] a daemon is already running (pid ${status.pid}). Use 'chorus daemon stop' first.`);
+    return 1;
+  }
+
+  if (!skipPreflight) {
+    // Run the SAME (injectable) preflight as the foreground path, in THIS TTY,
+    // before detaching — so credential completion + the yolo y/N confirm happen
+    // where a human can answer them.
+    const pf = await preflight(pfDeps);
+    if (typeof pf === "number") return pf; // preflight failed (e.g. declined yolo)
+  }
+
+  // Re-exec this same chorus entry without `-d` (so the child runs the daemon),
+  // marking it DETACHED so it skips the interactive preflight.
+  const nodePath = process.execPath;
+  const scriptArgs = process.argv.slice(1).filter((a) => a !== "-d" && a !== "--detach");
+  const result = lifecycle.startBackground({
+    nodePath,
+    args: scriptArgs,
+    env: { ...env, [DETACHED_ENV]: "1" },
+    cwd: process.cwd(),
+  });
+
+  if (result.alreadyRunning) {
+    errLog(`[Chorus] a daemon is already running (pid ${result.pid}).`);
+    return 1;
+  }
+  log(`[Chorus] daemon started in background (pid ${result.pid}).`);
+  log(`[Chorus]   logs:  chorus daemon logs   (${result.logFile})`);
+  log(`[Chorus]   stop:  chorus daemon stop`);
   return 0;
 }

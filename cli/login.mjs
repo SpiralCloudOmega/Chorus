@@ -3,7 +3,7 @@
 // ~/.chorus/daemon.json (0600). On validation failure, nothing is written.
 // Plain ESM; the only dependency is the in-repo MCP SDK (via chorus-client).
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { createInterface } from "node:readline";
 
@@ -50,7 +50,14 @@ export function prompt(query, opts = {}) {
 
 /**
  * Persist credentials + identity to the login file with owner-only perms.
- * @param {{ url: string, apiKey: string, agentUuid: string, agentName: string }} data
+ *
+ * Writing the file with a fresh credential object intentionally OMITS any
+ * `yoloAckAt` that a previous file carried — a credential change (re-login)
+ * clears the yolo acknowledgement, so the next yolo TTY start re-confirms once
+ * (daemon-permission-mode spec). To preserve an existing ack across an
+ * unrelated rewrite, the caller must read it first and pass it in `data`.
+ *
+ * @param {{ url: string, apiKey: string, agentUuid: string, agentName: string, yoloAckAt?: string }} data
  * @param {{ path?: string, write?: (p: string, c: string, o: object) => void, mkdir?: (p: string, o: object) => void }} [deps]
  */
 export function writeLoginFile(data, deps = {}) {
@@ -60,6 +67,27 @@ export function writeLoginFile(data, deps = {}) {
   mkdir(dirname(path), { recursive: true });
   write(path, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
   return path;
+}
+
+/**
+ * Record (or refresh) the yolo acknowledgement in the existing login file,
+ * preserving the credentials already on disk. Reads the current file, merges
+ * `yoloAckAt`, and rewrites with 0600. Used by the daemon after an interactive
+ * TTY yolo confirmation — it does NOT touch url/apiKey/identity.
+ *
+ * No-silent-errors: a read/parse failure is surfaced to the caller (throws), so
+ * the daemon can log it rather than silently losing the ack.
+ *
+ * @param {string} yoloAckAt  ISO-8601 timestamp of the confirmation.
+ * @param {{ path?: string, read?: (p: string) => string, write?: typeof writeLoginFile }} [deps]
+ * @returns {string} the file path written
+ */
+export function recordYoloAck(yoloAckAt, deps = {}) {
+  const path = deps.path ?? loginFilePath();
+  const read = deps.read ?? ((p) => readFileSync(p, "utf8"));
+  const write = deps.write ?? writeLoginFile;
+  const current = JSON.parse(read(path));
+  return write({ ...current, yoloAckAt }, { path });
 }
 
 /**

@@ -26,34 +26,43 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const SUBCOMMANDS = new Set(["daemon", "login"]);
 
-/**
- * Parse `--url` / `--api-key` / `--sigint-timeout` (and `=` forms) + boolean
- * `--yolo` out of an arg list.
- */
-function parseClientFlags(argv) {
-  const out = {};
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--url") out.url = argv[i + 1];
-    else if (a.startsWith("--url=")) out.url = a.slice("--url=".length);
-    else if (a === "--api-key") out.apiKey = argv[i + 1];
-    else if (a.startsWith("--api-key=")) out.apiKey = a.slice("--api-key=".length);
-    else if (a === "--yolo") out.yolo = true;
-    else if (a === "--sigint-timeout") out.sigintTimeout = argv[i + 1];
-    else if (a.startsWith("--sigint-timeout=")) out.sigintTimeout = a.slice("--sigint-timeout=".length);
-  }
-  return out;
+// Client-subcommand arg parsing + help text live in cli/client-args.mjs so they
+// are pure and unit-testable (this entry module runs side effects at import).
+import {
+  parseClientFlags,
+  parseDaemonAction,
+  daemonHelpText,
+  loginHelpText,
+} from "./cli/client-args.mjs";
+
+/** Read the package version once for help/version output. */
+function pkgVersion() {
+  return JSON.parse(readFileSync(join(__dirname, "package.json"), "utf8")).version;
 }
 
 async function runSubcommand(name, rest) {
   const flags = parseClientFlags(rest);
+
+  // Per-subcommand --help / -h fast-path: print subcommand-specific help and
+  // exit WITHOUT starting the daemon/login. (The server --help fast-path below
+  // is skipped for subcommands, so this is the only place client help is shown.)
+  if (flags.help) {
+    process.stdout.write(name === "login" ? loginHelpText(pkgVersion()) : daemonHelpText(pkgVersion()));
+    return 0;
+  }
+
   if (name === "login") {
     const { runLogin } = await import("./cli/login.mjs");
     return runLogin(flags);
   }
   if (name === "daemon") {
+    const action = parseDaemonAction(rest);
     const { runDaemon } = await import("./cli/daemon.mjs");
-    return runDaemon(flags);
+    // Lifecycle sub-actions (stop/status/restart/logs) are handled by the
+    // background-lifecycle module the daemon wires in; `run` is the normal
+    // long-lived daemon. We pass the resolved action through so a later task
+    // can dispatch it without re-parsing.
+    return runDaemon({ ...flags, action });
   }
   return 1;
 }
@@ -188,12 +197,19 @@ if (!isSubcommand && hasFlag("--version", "-v")) {
 // Configuration
 // ---------------------------------------------------------------------------
 
-const port = Number(getArg("--port", "-p") ?? process.env.PORT ?? 8637);
-const dataDir = resolve(
-  getArg("--data-dir", "-d") ?? process.env.CHORUS_DATA_DIR ?? join(homedir(), ".chorus-data")
-);
-const hostname = getArg("--hostname") ?? "0.0.0.0";
-const PGLITE_PORT = Number(getArg("--pglite-port") ?? process.env.CHORUS_PGLITE_PORT ?? 5433);
+// Server-only configuration. Guarded by `!isSubcommand` because these parse
+// SERVER flags — notably `-d` is the server's `--data-dir` short alias, which
+// collides with the daemon's `-d`/--detach. For `chorus daemon -d`, the
+// subcommand dispatch above owns the process; computing `resolve(getArg("--data-dir","-d"))`
+// here would see `-d` as a bare boolean `true` and throw `resolve(true)` on the
+// same tick, crashing before the daemon detaches. Skipping for subcommands keeps
+// the server-flag surface entirely out of the client-command path.
+const port = isSubcommand ? 0 : Number(getArg("--port", "-p") ?? process.env.PORT ?? 8637);
+const dataDir = isSubcommand
+  ? ""
+  : resolve(getArg("--data-dir", "-d") ?? process.env.CHORUS_DATA_DIR ?? join(homedir(), ".chorus-data"));
+const hostname = isSubcommand ? "" : getArg("--hostname") ?? "0.0.0.0";
+const PGLITE_PORT = isSubcommand ? 0 : Number(getArg("--pglite-port") ?? process.env.CHORUS_PGLITE_PORT ?? 5433);
 
 // ---------------------------------------------------------------------------
 // Utilities
