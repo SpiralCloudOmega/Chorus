@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.11.1] - 2026-06-22
+
+### Added
+- **Ship-time code-review gateway**: A new read-only `code-reviewer` agent runs as the final AI-DLC gateway — after the last task of an idea-rooted proposal is verified, it reviews the idea's *aggregate* code change (cross-task integration, architecture consistency, security, regression, feature-level coverage) and posts one VERDICT comment on the idea. Advisory/behavioral like the proposal/task reviewers (it never changes the idea's stored status). Wired across all four plugin surfaces (Claude Code, Codex, OpenClaw, standalone); the `on-post-verify-task.sh` hook gains a last-task-verify branch gated by `enableCodeReviewer` (default on) and bounded by `maxCodeReviewRounds` (default 3). Workflow skills document the gateway and the FAIL → quick-dev fix-task loop. (#350)
+- **Copy session ID in daemon chat**: The daemon chat transcript header gains a "Copy session ID" button that copies the bare `claude --resume` anchor so a human can take a conversation over locally. Works for both idea-anchored and ad-hoc sessions; icon-only on mobile, icon + label on desktop, with accessible copy confirmation. (#348)
+
+### Changed
+- **Online agents rank first in @-mention candidates**: `searchMentionables` now enriches → sorts → slices (previously sliced before computing liveness, so a flood of matching users could cut online agents out before they were known to be online). Online agents sort ahead of offline agents and users, idle-first among online agents. Pure server-side; both `GET /api/mentionables` and the MCP `chorus_search_mentionables` benefit. (#349)
+- **Project description renders as collapsible markdown**: The dashboard project description now renders through the Streamdown markdown pipeline (previously a plain `<p>`) and clamps to a fixed height with a Show more / Show less toggle. Clamping is by rendered height (not char-slicing) so markdown is never cut mid-token; the toggle only appears on actual overflow. (#351)
+
+### Plugin
+- **All plugin packages → 0.11.1**: Lockstep bump across Claude Code (marketplace.json + plugin.json), Codex, OpenClaw, every skill `SKILL.md` on all four surfaces, and the standalone `public/skill/` distribution — carrying the code-review gateway. (#350)
+
+---
+
 ## [0.11.0] - 2026-06-21
 
 ### Added
